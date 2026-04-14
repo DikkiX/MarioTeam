@@ -1,0 +1,42 @@
+name: Deploy to Test Server
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-test-server
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    name: Upload Files
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Get repository code
+        uses: actions/checkout@v4
+
+      - name: Upload files to the test server
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
+        with:
+          server: ${{ secrets.FTP_SERVER }}
+          username: ${{ secrets.FTP_USERNAME }}
+          password: ${{ secrets.FTP_PASSWORD }}
+          protocol: sftp
+          port: 22
+          # Dit is de map waar de site nu draait.
+          server-dir: /customers/9/f/d/c84yb4zgy/webroots/10777826/
+          # Deze bestanden of mappen hoeven niet naar de server.
+          exclude: |
+            **/.git*
+            **/.git*/**
+            **/.env
+            **/.env.*
+            **/.DS_Store
+            **/node_modules/**
+            **/vendor/**
+            docs/**
+            Oud/**
