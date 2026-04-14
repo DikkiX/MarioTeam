@@ -1,0 +1,2 @@
+#Deny all user, server itself will still have acces.
+require all denied
