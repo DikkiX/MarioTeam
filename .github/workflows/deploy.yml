@@ -1,4 +1,4 @@
-name: Deploy to Test Server
+name: Deploy Naar Testserver
 
 on:
   push:
@@ -7,36 +7,46 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: deploy-test-server
+  group: deploy-testserver
   cancel-in-progress: true
 
 jobs:
   deploy:
-    name: Upload Files
+    name: Bestanden Uploaden
     runs-on: ubuntu-latest
 
     steps:
-      - name: Get repository code
+      - name: Repository Ophalen
         uses: actions/checkout@v4
 
-      - name: Upload files to the test server
-        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
-        with:
-          server: ${{ secrets.FTP_SERVER }}
-          username: ${{ secrets.FTP_USERNAME }}
-          password: ${{ secrets.FTP_PASSWORD }}
-          protocol: sftp
-          port: 22
-          # Dit is de map waar de site nu draait.
-          server-dir: /customers/9/f/d/c84yb4zgy/webroots/10777826/
-          # Deze bestanden of mappen hoeven niet naar de server.
-          exclude: |
-            **/.git*
-            **/.git*/**
-            **/.env
-            **/.env.*
-            **/.DS_Store
-            **/node_modules/**
-            **/vendor/**
-            docs/**
-            Oud/**
+      - name: Lftp Installeren
+        run: sudo apt-get update && sudo apt-get install -y lftp
+
+      - name: Bestanden Via SFTP Uploaden
+        env:
+          FTP_SERVER: ${{ secrets.FTP_SERVER }}
+          FTP_USERNAME: ${{ secrets.FTP_USERNAME }}
+          FTP_PASSWORD: ${{ secrets.FTP_PASSWORD }}
+        run: |
+          # Deze map op de server bevat nu de site.
+          DOELMAP="/customers/9/f/d/c84yb4zgy/webroots/10777826/"
+
+          # mirror -R zet lokale bestanden naar de server.
+          # --delete haalt oude repo-bestanden op de server weg.
+          lftp -u "$FTP_USERNAME","$FTP_PASSWORD" "sftp://$FTP_SERVER:22" <<EOF
+          set sftp:auto-confirm yes
+          set ssl:verify-certificate no
+          mirror -R --delete --verbose \
+            --exclude-glob .git \
+            --exclude-glob .github \
+            --exclude-glob .gitignore \
+            --exclude-glob .env \
+            --exclude-glob .env.* \
+            --exclude-glob .DS_Store \
+            --exclude-glob docs \
+            --exclude-glob Oud \
+            --exclude-glob node_modules \
+            --exclude-glob vendor \
+            ./ "$DOELMAP"
+          bye
+          EOF
