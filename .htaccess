@@ -2,3 +2,6 @@ RewriteEngine On
 
 # Dit maakt /api/chat/send beschikbaar zonder .php in de URL.
 RewriteRule ^api/chat/send/?$ api/chat/send.php [L,QSA]
+
+# Dit pad start het worker-script.
+RewriteRule ^api/chat/worker/?$ api/chat/worker.php [L,QSA]
