@@ -26,19 +26,20 @@ function bouwToolsVoorOpenAi()
             'type' => 'function',
             'function' => [
                 'name' => 'zoek_bestelling',
-                'description' => 'Zoek live besteldata op in de tabel Bestellingen. Gebruik dit als iemand vraagt naar een bestelling, betaling, verzending of tracktrace.',
+                'description' => 'Zoek live besteldata op in de tabel Bestellingen. Gebruik dit alleen als de klant zowel een bestelnummer als hetzelfde e-mailadres geeft dat bij de bestelling hoort.',
                 'parameters' => [
                     'type' => 'object',
                     'properties' => [
                         'bestelling_id' => [
                             'type' => 'integer',
-                            'description' => 'Het bestelnummer als dat bekend is.',
+                            'description' => 'Het bestelnummer van de klant.',
                         ],
                         'email' => [
                             'type' => 'string',
-                            'description' => 'Het e-mailadres van de klant als het bestelnummer niet bekend is.',
+                            'description' => 'Het e-mailadres dat bij de bestelling hoort.',
                         ],
                     ],
+                    'required' => ['bestelling_id', 'email'],
                     'additionalProperties' => false,
                 ],
             ],
@@ -121,57 +122,60 @@ function roepOpenAiAan($messages, $tools = [])
 function voerInterneFunctieUit($conn, $functieNaam, $arguments)
 {
     if ($functieNaam === 'zoek_bestelling') {
-        // De AI kan zoeken op bestelnummer of op e-mailadres.
+        // Voor orderdata eisen we nu altijd 2 gegevens:
+        // bestelnummer + hetzelfde e-mailadres als in de bestelling.
         $bestellingId = isset($arguments['bestelling_id']) ? (int) $arguments['bestelling_id'] : 0;
         $email = isset($arguments['email']) ? trim((string) $arguments['email']) : '';
 
-        if ($bestellingId > 0) {
-            // Dit haalt 1 specifieke bestelling op.
-            $stmt = $conn->prepare("
-                SELECT id, koppel_id, naam, mail, betaling, totaal, status, verzending, datum, PayStatus, tracktrace
-                FROM Bestellingen
-                WHERE id = :id
-                LIMIT 1
-            ");
-            $stmt->execute([
-                ':id' => $bestellingId,
-            ]);
-
-            $resultaat = $stmt->fetch();
-
+        if ($bestellingId <= 0 || $email === '') {
+            schrijfWorkerLog('Bestelling-validatie mislukt: bestelnummer of e-mail ontbreekt.');
             return [
                 'functie' => 'zoek_bestelling',
-                'gevonden' => $resultaat !== false,
-                'resultaat' => $resultaat,
+                'gevonden' => false,
+                'message' => 'Voor orderdata zijn zowel bestelling_id als email verplicht.',
             ];
         }
 
-        if ($email !== '') {
-            // Dit haalt de nieuwste bestellingen op van 1 klant.
-            $stmt = $conn->prepare("
-                SELECT id, koppel_id, naam, mail, betaling, totaal, status, verzending, datum, PayStatus, tracktrace
-                FROM Bestellingen
-                WHERE mail = :email
-                ORDER BY datum DESC, id DESC
-                LIMIT 5
-            ");
-            $stmt->execute([
-                ':email' => $email,
-            ]);
+        // Eerst controleren we of het bestelnummer echt bij dit e-mailadres hoort.
+        $validatieStmt = $conn->prepare("
+            SELECT id
+            FROM Bestellingen
+            WHERE id = :id AND mail = :email
+            LIMIT 1
+        ");
+        $validatieStmt->execute([
+            ':id' => $bestellingId,
+            ':email' => $email,
+        ]);
+        $validatieResultaat = $validatieStmt->fetch();
 
-            $resultaat = $stmt->fetchAll();
-
+        if (!$validatieResultaat) {
+            schrijfWorkerLog('Bestelling-validatie mislukt voor bestelling ' . $bestellingId . '.');
             return [
                 'functie' => 'zoek_bestelling',
-                'gevonden' => !empty($resultaat),
-                'resultaat' => $resultaat,
+                'gevonden' => false,
+                'message' => 'De combinatie van bestelling_id en email klopt niet.',
             ];
         }
+
+        // Pas na de check halen we de orderinformatie op.
+        // We geven alleen de velden terug die nodig zijn voor de statusvraag.
+        $stmt = $conn->prepare("
+            SELECT id, betaling, totaal, status, verzending, datum, PayStatus, tracktrace
+            FROM Bestellingen
+            WHERE id = :id AND mail = :email
+            LIMIT 1
+        ");
+        $stmt->execute([
+            ':id' => $bestellingId,
+            ':email' => $email,
+        ]);
+        $resultaat = $stmt->fetch();
 
         return [
             'functie' => 'zoek_bestelling',
-            'gevonden' => false,
-            'message' => 'Er is geen bestelling_id of email meegegeven.',
+            'gevonden' => $resultaat !== false,
+            'resultaat' => $resultaat,
         ];
     }
 
@@ -235,7 +239,7 @@ function maakBerichtenVoorOpenAi($bericht)
     return [
         [
             'role' => 'system',
-            'content' => 'Je bent een klantenservice assistent voor MarioSwitch.nl. Als je live data nodig hebt, gebruik je een functie. Geef geen data op basis van aannames als een functie nodig is. Noem nooit exacte voorraadaantallen aan klanten. Zeg alleen of iets op voorraad is of niet.',
+            'content' => 'Je bent een klantenservice assistent voor MarioSwitch.nl. Als je live data nodig hebt, gebruik je een functie. Geef geen data op basis van aannames als een functie nodig is. Noem nooit exacte voorraadaantallen aan klanten. Zeg alleen of iets op voorraad is of niet. Voor orderdata moet de klant eerst zowel een bestelnummer als het juiste e-mailadres geven.',
         ],
         [
             'role' => 'user',
