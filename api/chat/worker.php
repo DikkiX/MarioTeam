@@ -17,6 +17,8 @@ function schrijfWorkerLog($message)
     file_put_contents($logBestand, $regel, FILE_APPEND);
 }
 
+// Dit zijn de interne functies die OpenAI mag gebruiken.
+// Zo kan het model live data opvragen in plaats van gokken.
 function bouwToolsVoorOpenAi()
 {
     return [
@@ -62,6 +64,8 @@ function bouwToolsVoorOpenAi()
     ];
 }
 
+// Deze functie stuurt berichten naar OpenAI.
+// Als we tools meegeven, mag het model ook een functie aanroepen.
 function roepOpenAiAan($messages, $tools = [])
 {
     $apiKey = getProjectEnvValue('OPENAI_API_KEY');
@@ -83,6 +87,7 @@ function roepOpenAiAan($messages, $tools = [])
         $data['tool_choice'] = 'auto';
     }
 
+    // We doen hier een gewone API-call naar OpenAI.
     $ch = curl_init('https://api.openai.com/v1/chat/completions');
     curl_setopt($ch, CURLOPT_POST, true);
     curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($data));
@@ -111,13 +116,17 @@ function roepOpenAiAan($messages, $tools = [])
     return $decoded;
 }
 
+// Hier voeren we de echte databasefunctie uit die OpenAI vraagt.
+// We geven daarna alleen ruwe data terug, nog geen mooi klantantwoord.
 function voerInterneFunctieUit($conn, $functieNaam, $arguments)
 {
     if ($functieNaam === 'zoek_bestelling') {
+        // De AI kan zoeken op bestelnummer of op e-mailadres.
         $bestellingId = isset($arguments['bestelling_id']) ? (int) $arguments['bestelling_id'] : 0;
         $email = isset($arguments['email']) ? trim((string) $arguments['email']) : '';
 
         if ($bestellingId > 0) {
+            // Dit haalt 1 specifieke bestelling op.
             $stmt = $conn->prepare("
                 SELECT id, koppel_id, naam, mail, betaling, totaal, status, verzending, datum, PayStatus, tracktrace
                 FROM Bestellingen
@@ -138,6 +147,7 @@ function voerInterneFunctieUit($conn, $functieNaam, $arguments)
         }
 
         if ($email !== '') {
+            // Dit haalt de nieuwste bestellingen op van 1 klant.
             $stmt = $conn->prepare("
                 SELECT id, koppel_id, naam, mail, betaling, totaal, status, verzending, datum, PayStatus, tracktrace
                 FROM Bestellingen
@@ -166,6 +176,7 @@ function voerInterneFunctieUit($conn, $functieNaam, $arguments)
     }
 
     if ($functieNaam === 'zoek_productvoorraad') {
+        // Hiermee kan de AI live voorraad en productinfo opvragen.
         $zoekterm = isset($arguments['zoekterm']) ? trim((string) $arguments['zoekterm']) : '';
 
         if ($zoekterm === '') {
@@ -176,6 +187,7 @@ function voerInterneFunctieUit($conn, $functieNaam, $arguments)
             ];
         }
 
+        // We zoeken op titel of link en geven de beste matches terug.
         $zoektermLike = '%' . $zoekterm . '%';
         $stmt = $conn->prepare("
             SELECT 
@@ -191,12 +203,13 @@ function voerInterneFunctieUit($conn, $functieNaam, $arguments)
                 i.TotBeoord
             FROM Winkel w
             LEFT JOIN info i ON i.link = w.link
-            WHERE w.titel LIKE :zoekterm OR w.link LIKE :zoekterm
+            WHERE w.titel LIKE :zoekterm_titel OR w.link LIKE :zoekterm_link
             ORDER BY w.aantal DESC, w.prijs ASC
             LIMIT 5
         ");
         $stmt->execute([
-            ':zoekterm' => $zoektermLike,
+            ':zoekterm_titel' => $zoektermLike,
+            ':zoekterm_link' => $zoektermLike,
         ]);
 
         $resultaat = $stmt->fetchAll();
@@ -215,6 +228,8 @@ function voerInterneFunctieUit($conn, $functieNaam, $arguments)
     ];
 }
 
+// Dit maakt het eerste gesprek voor OpenAI.
+// Eerst krijgt het model alleen de vraag van de gebruiker.
 function maakBerichtenVoorOpenAi($bericht)
 {
     return [
@@ -284,6 +299,7 @@ try {
 
     $conn->commit();
 
+    // Vanaf hier gaat het bericht echt naar OpenAI.
     schrijfWorkerLog('Bericht ' . $bericht['id'] . ' is op processing gezet.');
 
     $messages = maakBerichtenVoorOpenAi($bericht);
@@ -302,6 +318,7 @@ try {
     if (!empty($assistantMessage['tool_calls'])) {
         schrijfWorkerLog('OpenAI vroeg om een interne functie voor bericht ' . $bericht['id'] . '.');
 
+        // We bewaren eerst welke tool-call OpenAI wilde doen.
         $messages[] = $assistantMessage;
 
         foreach ($assistantMessage['tool_calls'] as $toolCall) {
@@ -316,6 +333,7 @@ try {
             $functieResultaat = voerInterneFunctieUit($conn, $functieNaam, $arguments);
             schrijfWorkerLog('Functie-resultaat: ' . json_encode($functieResultaat, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
 
+            // Hier geven we de ruwe database-uitkomst terug aan OpenAI.
             $messages[] = [
                 'role' => 'tool',
                 'tool_call_id' => $toolCall['id'],
@@ -344,12 +362,13 @@ try {
     }
 
     echo 'Bericht ' . $bericht['id'] . ' is op processing gezet.';
-} catch (PDOException $e) {
+} catch (Throwable $e) {
     if ($conn->inTransaction()) {
         $conn->rollBack();
     }
 
-    schrijfWorkerLog('Worker fout tijdens ophalen van pending bericht.');
+    // We loggen hier wat er echt misging, zodat testen makkelijker wordt.
+    schrijfWorkerLog('Worker fout: ' . $e->getMessage());
     http_response_code(500);
     exit('Worker kon de wachtrij niet verwerken.');
 }
