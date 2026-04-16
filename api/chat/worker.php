@@ -195,8 +195,8 @@ function voerInterneFunctieUit($conn, $functieNaam, $arguments)
                 w.titel,
                 w.link,
                 w.prijs,
-                w.aantal,
                 w.sentence,
+                CASE WHEN w.aantal > 0 THEN 'ja' ELSE 'nee' END AS op_voorraad,
                 i.leeftijd,
                 i.spelers,
                 i.GemCijfer,
@@ -235,7 +235,7 @@ function maakBerichtenVoorOpenAi($bericht)
     return [
         [
             'role' => 'system',
-            'content' => 'Je bent een klantenservice assistent voor MarioSwitch.nl. Als je live data nodig hebt, gebruik je een functie. Geef geen data op basis van aannames als een functie nodig is.',
+            'content' => 'Je bent een klantenservice assistent voor MarioSwitch.nl. Als je live data nodig hebt, gebruik je een functie. Geef geen data op basis van aannames als een functie nodig is. Noem nooit exacte voorraadaantallen aan klanten. Zeg alleen of iets op voorraad is of niet.',
         ],
         [
             'role' => 'user',
