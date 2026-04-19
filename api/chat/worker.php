@@ -17,6 +17,22 @@ function schrijfWorkerLog($message)
     file_put_contents($logBestand, $regel, FILE_APPEND);
 }
 
+// Hiermee werken we het queue-bericht bij in de database.
+// Zo kunnen we status en antwoord veilig opslaan.
+function updateChatQueueBericht($conn, $berichtId, $status, $aiResponse = null)
+{
+    $stmt = $conn->prepare("
+        UPDATE chat_queue
+        SET ai_response = :ai_response, status = :status
+        WHERE id = :id
+    ");
+    $stmt->execute([
+        ':ai_response' => $aiResponse,
+        ':status' => $status,
+        ':id' => $berichtId,
+    ]);
+}
+
 // Dit zijn de interne functies die OpenAI mag gebruiken.
 // Zo kan het model live data opvragen in plaats van gokken.
 function bouwToolsVoorOpenAi()
@@ -275,6 +291,8 @@ if (!in_array($_SERVER['REQUEST_METHOD'], ['POST', 'GET'], true)) {
     exit('Alleen GET en POST zijn toegestaan.');
 }
 
+$actiefBerichtId = 0;
+
 try {
     $conn->beginTransaction();
 
@@ -300,6 +318,8 @@ try {
         echo 'Geen pending berichten gevonden.';
         exit;
     }
+
+    $actiefBerichtId = (int) $bericht['id'];
 
     // Meteen op processing zetten voorkomt dubbele verwerking.
     $updateSql = "
@@ -337,9 +357,9 @@ try {
     $eersteAntwoord = roepOpenAiAan($messages, $tools, $toolChoice);
 
     if (!isset($eersteAntwoord['choices'][0]['message'])) {
+        updateChatQueueBericht($conn, $actiefBerichtId, 'error');
         schrijfWorkerLog('OpenAI gaf geen bruikbaar eerste antwoord terug.');
-        echo 'Bericht ' . $bericht['id'] . ' is op processing gezet.';
-        exit;
+        exit('Worker kon geen eerste AI-antwoord maken.');
     }
 
     $assistantMessage = $eersteAntwoord['choices'][0]['message'];
@@ -376,25 +396,39 @@ try {
         $definitiefAntwoord = $tweedeAntwoord['choices'][0]['message']['content'] ?? '';
 
         if ($definitiefAntwoord !== '') {
+            updateChatQueueBericht($conn, $actiefBerichtId, 'completed', $definitiefAntwoord);
             schrijfWorkerLog('Definitief AI-antwoord gemaakt voor bericht ' . $bericht['id'] . ': ' . $definitiefAntwoord);
         } else {
+            updateChatQueueBericht($conn, $actiefBerichtId, 'error');
             schrijfWorkerLog('Na function calling kwam er geen definitief antwoord terug.');
+            exit('Worker kon geen definitief AI-antwoord maken.');
         }
     } else {
         // Soms geeft OpenAI meteen al een normaal antwoord terug.
         $directAntwoord = $assistantMessage['content'] ?? '';
 
         if ($directAntwoord !== '') {
+            updateChatQueueBericht($conn, $actiefBerichtId, 'completed', $directAntwoord);
             schrijfWorkerLog('OpenAI gaf direct antwoord zonder functie: ' . $directAntwoord);
         } else {
+            updateChatQueueBericht($conn, $actiefBerichtId, 'error');
             schrijfWorkerLog('OpenAI gaf geen tekst en ook geen functie terug.');
+            exit('Worker kreeg geen bruikbaar AI-antwoord terug.');
         }
     }
 
-    echo 'Bericht ' . $bericht['id'] . ' is op processing gezet.';
+    echo 'Bericht ' . $bericht['id'] . ' is verwerkt.';
 } catch (Throwable $e) {
     if ($conn->inTransaction()) {
         $conn->rollBack();
+    }
+
+    if ($actiefBerichtId > 0) {
+        try {
+            updateChatQueueBericht($conn, $actiefBerichtId, 'error');
+        } catch (Throwable $updateError) {
+            schrijfWorkerLog('Kon error-status niet opslaan voor bericht ' . $actiefBerichtId . '.');
+        }
     }
 
     // We loggen hier wat er echt misging, zodat testen makkelijker wordt.
