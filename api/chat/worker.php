@@ -65,9 +65,29 @@ function bouwToolsVoorOpenAi()
     ];
 }
 
+// Deze functie kijkt of een bericht duidelijk over een bestelling gaat.
+// Als bestelnummer en e-mail allebei in de tekst staan, kunnen we de functie afdwingen.
+function bepaalGeforceerdeToolChoice($berichtTekst)
+{
+    $heeftBestelWoord = preg_match('/bestelling|bestelnummer|order|status/i', $berichtTekst) === 1;
+    $heeftEmail = preg_match('/[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}/i', $berichtTekst) === 1;
+    $heeftBestelnummer = preg_match('/\b\d{4,}\b/', $berichtTekst) === 1;
+
+    if ($heeftBestelWoord && $heeftEmail && $heeftBestelnummer) {
+        return [
+            'type' => 'function',
+            'function' => [
+                'name' => 'zoek_bestelling',
+            ],
+        ];
+    }
+
+    return 'auto';
+}
+
 // Deze functie stuurt berichten naar OpenAI.
 // Als we tools meegeven, mag het model ook een functie aanroepen.
-function roepOpenAiAan($messages, $tools = [])
+function roepOpenAiAan($messages, $tools = [], $toolChoice = 'auto')
 {
     $apiKey = getProjectEnvValue('OPENAI_API_KEY');
 
@@ -85,7 +105,7 @@ function roepOpenAiAan($messages, $tools = [])
 
     if (!empty($tools)) {
         $data['tools'] = $tools;
-        $data['tool_choice'] = 'auto';
+        $data['tool_choice'] = $toolChoice;
     }
 
     // We doen hier een gewone API-call naar OpenAI.
@@ -308,7 +328,13 @@ try {
 
     $messages = maakBerichtenVoorOpenAi($bericht);
     $tools = bouwToolsVoorOpenAi();
-    $eersteAntwoord = roepOpenAiAan($messages, $tools);
+    $toolChoice = bepaalGeforceerdeToolChoice($bericht['user_message']);
+
+    if ($toolChoice !== 'auto') {
+        schrijfWorkerLog('Worker forceert functie zoek_bestelling voor bericht ' . $bericht['id'] . '.');
+    }
+
+    $eersteAntwoord = roepOpenAiAan($messages, $tools, $toolChoice);
 
     if (!isset($eersteAntwoord['choices'][0]['message'])) {
         schrijfWorkerLog('OpenAI gaf geen bruikbaar eerste antwoord terug.');
