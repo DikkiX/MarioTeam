@@ -345,89 +345,186 @@ function scrollToBottom() {
     }
 }
 
+function getCookieValue(name) {
+    const cookieParts = document.cookie.split('; ');
+
+    for (const cookiePart of cookieParts) {
+        const [cookieName, cookieValue] = cookiePart.split('=');
+        if (cookieName === name) {
+            return decodeURIComponent(cookieValue || '');
+        }
+    }
+
+    return '';
+}
+
+function ensureChatSessionCookie() {
+    let cookieValue = getCookieValue('chatbot_session');
+
+    if (cookieValue !== '') {
+        return cookieValue;
+    }
+
+    // We maken zelf een cookie aan zodat de queue en frontend dezelfde bezoeker herkennen.
+    cookieValue = 'chat-' + Math.random().toString(36).slice(2) + Date.now().toString(36);
+    document.cookie = `chatbot_session=${encodeURIComponent(cookieValue)}; path=/; max-age=31536000; SameSite=Lax`;
+    return cookieValue;
+}
+
+function createMessageElement(type, text) {
+    const wrapper = document.createElement('div');
+    wrapper.className = `chat-message ${type}`;
+
+    const paragraph = document.createElement('p');
+    paragraph.textContent = text;
+
+    const time = document.createElement('span');
+    time.className = 'message-time';
+    const now = new Date();
+    time.textContent = now.getHours().toString().padStart(2, '0') + ':' + now.getMinutes().toString().padStart(2, '0');
+
+    paragraph.appendChild(time);
+    wrapper.appendChild(paragraph);
+
+    return wrapper;
+}
+
+function createTypingIndicator() {
+    const typingIndicator = document.createElement('div');
+    typingIndicator.className = 'chat-message bot typing-indicator';
+    typingIndicator.innerHTML = `
+        <p>Mr M: <span class="dot">.</span><span class="dot">.</span><span class="dot">.</span></p>
+    `;
+
+    return typingIndicator;
+}
+
 
 document.addEventListener('DOMContentLoaded', function () {
+
+    // Deze functie vraagt steeds of het AI-antwoord al klaar is.
+    function startPolling(berichtId, typingIndicator) {
+        const chatMessages = document.getElementById('chatMessages');
+        let pollingTimer = null;
+        let aantalPogingen = 0;
+
+        const stopPolling = () => {
+            if (pollingTimer !== null) {
+                clearInterval(pollingTimer);
+                pollingTimer = null;
+            }
+        };
+
+        const haalStatusOp = async () => {
+            aantalPogingen += 1;
+
+            try {
+                const response = await fetch(`/api/chat/status?bericht_id=${encodeURIComponent(berichtId)}`, {
+                    method: 'GET',
+                    credentials: 'same-origin'
+                });
+                const data = await response.json();
+
+                if (!response.ok || data.status !== 'succes') {
+                    throw new Error('Status ophalen mislukt.');
+                }
+
+                const queueStatus = data.bericht.queue_status;
+                const aiResponse = data.bericht.ai_response || '';
+
+                if (queueStatus === 'pending' || queueStatus === 'processing') {
+                    return;
+                }
+
+                stopPolling();
+
+                if (typingIndicator && typingIndicator.parentNode) {
+                    typingIndicator.parentNode.removeChild(typingIndicator);
+                }
+
+                if (queueStatus === 'completed') {
+                    chatMessages.appendChild(createMessageElement('bot', aiResponse));
+                } else if (queueStatus === 'error') {
+                    chatMessages.appendChild(createMessageElement('system', 'Er ging iets mis bij het ophalen van het antwoord. Probeer het later opnieuw.'));
+                } else {
+                    chatMessages.appendChild(createMessageElement('system', 'Onbekende berichtstatus ontvangen.'));
+                }
+
+                scrollToBottom();
+            } catch (error) {
+                // Als pollen meerdere keren mislukt, stoppen we netjes met een algemene foutmelding.
+                if (aantalPogingen < 3) {
+                    return;
+                }
+
+                stopPolling();
+
+                if (typingIndicator && typingIndicator.parentNode) {
+                    typingIndicator.parentNode.removeChild(typingIndicator);
+                }
+
+                chatMessages.appendChild(createMessageElement('system', 'Er ging iets mis bij het ophalen van het antwoord. Probeer het later opnieuw.'));
+                scrollToBottom();
+            }
+        };
+
+        haalStatusOp();
+        pollingTimer = setInterval(haalStatusOp, 2000);
+    }
 
     // Algemene functie om berichten te verwerken
     async function processMessage(message) {
         const chatMessages = document.getElementById('chatMessages');
-        
-        if (message !== 'wacht op 2de bericht')
-        {
-        // Voeg het gebruikersbericht toe aan de chatgeschiedenis
-        const now = new Date();
-        const hours = now.getHours().toString().padStart(2, '0');
-        const minutes = now.getMinutes().toString().padStart(2, '0');
+        const sessionCookie = ensureChatSessionCookie();
 
-        chatMessages.innerHTML += `
-            <div class='chat-message user'>
-                <p>${message}<span class='message-time'>${hours}:${minutes}</span></p>
-            </div>
-        `;
-
-        // Scroll naar beneden
-        scrollToBottom();
-		}
-
-    // Start de timer voor de "aan het typen"-indicator
-    let typingIndicator;
-    let typingIndicatorTimeout = setTimeout(() => {
-        // Voeg de "aan het typen"-indicator toe
-        typingIndicator = document.createElement('div');
-        typingIndicator.className = 'chat-message bot typing-indicator';
-        typingIndicator.innerHTML = `
-            <p>Mr M: <span class="dot">.</span><span class="dot">.</span><span class="dot">.</span></p>
-        `;
-        chatMessages.appendChild(typingIndicator);
-        scrollToBottom();
-    }, 250); // Vertraging van 250 ms
-
-    // Verstuur bericht naar de server via AJAX
-    const pageValue = document.getElementById('page').value;
-try {
-    const response = await fetch('ChatGptMrM.php', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({ user: message, page: pageValue })
-    });
-
-        // AJAX-response ontvangen, dus clear de timer voor de typing-indicator
-        clearTimeout(typingIndicatorTimeout);
-
-        // Als de typing-indicator al is toegevoegd, verwijder deze
-        if (typingIndicator) {
-            chatMessages.removeChild(typingIndicator);
-        }
-
-        // Ontvang het antwoord van de server
-        const serverReply = await response.text();
-
-            // Voeg het antwoord van de chatbot toe aan de chatgeschiedenis
-            chatMessages.innerHTML += serverReply;
+        if (message !== 'wacht op 2de bericht') {
+            chatMessages.appendChild(createMessageElement('user', message));
+            // Scroll naar beneden
             scrollToBottom();
-            
-            
-        // Controleer of het antwoord specifieke berichten bevat
-        const specificMessages = [
-            'Ik heb antwoord op al mijn vragen.',
-            'Ik ga nu opzoek naar de perfecte games.'
-        ];
-        const tempDiv = document.createElement('div');
-        tempDiv.innerHTML = serverReply;
-        const botMessage = tempDiv.textContent || tempDiv.innerText;
-        const shouldSendAdditionalMessage = specificMessages.some(specificMessage => botMessage.includes(specificMessage));
-        if (shouldSendAdditionalMessage && message !== 'wacht op 2de bericht') {
-            await processMessage('wacht op 2de bericht');
         }
-            
-         //einde controlle   
+
+        // We tonen tijdens wachten dezelfde laad-animatie als eerst.
+        let typingIndicator = null;
+        const typingIndicatorTimeout = setTimeout(() => {
+            typingIndicator = createTypingIndicator();
+            chatMessages.appendChild(typingIndicator);
+            scrollToBottom();
+        }, 250);
+
+        try {
+            const response = await fetch('/api/chat/send', {
+                method: 'POST',
+                credentials: 'same-origin',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    cookie: sessionCookie,
+                    user_message: message
+                })
+            });
+            const data = await response.json();
+
+            clearTimeout(typingIndicatorTimeout);
+
+            if (!response.ok || data.status !== 'succes') {
+                throw new Error('Bericht opslaan mislukt.');
+            }
+
+            if (!typingIndicator) {
+                typingIndicator = createTypingIndicator();
+                chatMessages.appendChild(typingIndicator);
+            }
+
+            // Vanaf hier blijven we pollen tot completed of error.
+            startPolling(data.bericht_id, typingIndicator);
+            scrollToBottom();
         } catch (error) {
-            console.error('Fout bij het verwerken van het bericht:', error);
-            chatMessages.innerHTML += `
-                <div class='chat-message system'>
-                    <p>Er ging iets mis bij het verwerken van het bericht. Probeer het later opnieuw.</p>
-                </div>
-            `;
+            clearTimeout(typingIndicatorTimeout);
+
+            if (typingIndicator && typingIndicator.parentNode) {
+                typingIndicator.parentNode.removeChild(typingIndicator);
+            }
+
+            chatMessages.appendChild(createMessageElement('system', 'Er ging iets mis bij het versturen van het bericht. Probeer het later opnieuw.'));
             scrollToBottom();
         }
     }
