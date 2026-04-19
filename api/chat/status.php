@@ -1,7 +1,8 @@
 <?php
 include_once $_SERVER['DOCUMENT_ROOT'] . '/include/db.inc';
 
-// Dit endpoint geeft de huidige status van 1 queue-bericht terug.
+// Dit bestand wordt door de frontend gebruikt om te vragen:
+// "Is het antwoord al klaar?"
 header('Content-Type: application/json; charset=utf-8');
 
 function stuurJsonResponse($httpStatus, $data)
@@ -11,6 +12,7 @@ function stuurJsonResponse($httpStatus, $data)
     exit;
 }
 
+// Dit endpoint mag alleen gelezen worden.
 if ($_SERVER['REQUEST_METHOD'] !== 'GET') {
     header('Allow: GET');
     stuurJsonResponse(405, [
@@ -21,6 +23,7 @@ if ($_SERVER['REQUEST_METHOD'] !== 'GET') {
 
 $berichtId = isset($_GET['bericht_id']) ? (int) $_GET['bericht_id'] : 0;
 
+// Zonder bericht-id weten we niet welk antwoord we moeten controleren.
 if ($berichtId <= 0) {
     stuurJsonResponse(422, [
         'status' => 'error',
@@ -29,6 +32,7 @@ if ($berichtId <= 0) {
 }
 
 try {
+    // We halen alleen de status en het eventuele antwoord op.
     $stmt = $conn->prepare("
         SELECT id, status, ai_response
         FROM chat_queue
@@ -40,6 +44,7 @@ try {
     ]);
     $bericht = $stmt->fetch();
 
+    // Als het bericht niet bestaat, kan de frontend daar ook niet op wachten.
     if (!$bericht) {
         stuurJsonResponse(404, [
             'status' => 'error',
@@ -47,6 +52,8 @@ try {
         ]);
     }
 
+    // Dit krijgt de frontend terug om te bepalen:
+    // wachten, antwoord tonen of foutmelding tonen.
     stuurJsonResponse(200, [
         'status' => 'succes',
         'bericht' => [

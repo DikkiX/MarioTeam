@@ -268,20 +268,85 @@ function voerInterneFunctieUit($conn, $functieNaam, $arguments)
     ];
 }
 
-// Dit maakt het eerste gesprek voor OpenAI.
-// Eerst krijgt het model alleen de vraag van de gebruiker.
-function maakBerichtenVoorOpenAi($bericht)
+// Hiermee halen we eerdere berichten van dezelfde bezoeker op.
+// Zo kan de chatbot vervolgvragen beter begrijpen.
+function haalGespreksContextOp($conn, $cookie, $actiefBerichtId, $maxBerichten = 6)
 {
-    return [
+    if ($cookie === '') {
+        return [];
+    }
+
+    $stmt = $conn->prepare("
+        SELECT id, user_message, ai_response
+        FROM chat_queue
+        WHERE cookie = :cookie
+          AND id < :actief_id
+          AND status = 'completed'
+        ORDER BY id DESC
+        LIMIT :max_berichten
+    ");
+    $stmt->bindValue(':cookie', $cookie, PDO::PARAM_STR);
+    $stmt->bindValue(':actief_id', $actiefBerichtId, PDO::PARAM_INT);
+    $stmt->bindValue(':max_berichten', $maxBerichten, PDO::PARAM_INT);
+    $stmt->execute();
+
+    $resultaten = $stmt->fetchAll();
+
+    if (empty($resultaten)) {
+        return [];
+    }
+
+    $resultaten = array_reverse($resultaten);
+    $contextMessages = [];
+
+    foreach ($resultaten as $vorigBericht) {
+        if (!empty($vorigBericht['user_message'])) {
+            $contextMessages[] = [
+                'role' => 'user',
+                'content' => $vorigBericht['user_message'],
+            ];
+        }
+
+        if (!empty($vorigBericht['ai_response'])) {
+            $contextMessages[] = [
+                'role' => 'assistant',
+                'content' => $vorigBericht['ai_response'],
+            ];
+        }
+    }
+
+    return $contextMessages;
+}
+
+// Dit maakt het gesprek voor OpenAI.
+// Eerst voegen we wat eerdere context toe en daarna de nieuwste vraag.
+function maakBerichtenVoorOpenAi($conn, $bericht)
+{
+    $messages = [
         [
             'role' => 'system',
             'content' => 'Je bent een klantenservice assistent voor MarioSwitch.nl. Als je live data nodig hebt, gebruik je een functie. Geef geen data op basis van aannames als een functie nodig is. Noem nooit exacte voorraadaantallen aan klanten. Zeg alleen of iets op voorraad is of niet. Voor orderdata moet de klant eerst zowel een bestelnummer als het juiste e-mailadres geven.',
         ],
+    ];
+
+    // We nemen de laatste afgeronde berichten van dezelfde bezoeker mee.
+    $contextMessages = haalGespreksContextOp(
+        $conn,
+        (string) ($bericht['cookie'] ?? ''),
+        (int) ($bericht['id'] ?? 0)
+    );
+
+    foreach ($contextMessages as $contextMessage) {
+        $messages[] = $contextMessage;
+    }
+
+    // Als laatste komt altijd de nieuwe vraag van de gebruiker.
+    return array_merge($messages, [
         [
             'role' => 'user',
             'content' => $bericht['user_message'],
-        ],
-    ];
+        ]
+    ]);
 }
 
 // De worker mag via POST door de trigger starten.
@@ -346,7 +411,7 @@ try {
     // Vanaf hier gaat het bericht echt naar OpenAI.
     schrijfWorkerLog('Bericht ' . $bericht['id'] . ' is op processing gezet.');
 
-    $messages = maakBerichtenVoorOpenAi($bericht);
+    $messages = maakBerichtenVoorOpenAi($conn, $bericht);
     $tools = bouwToolsVoorOpenAi();
     $toolChoice = bepaalGeforceerdeToolChoice($bericht['user_message']);
 
