@@ -15,12 +15,18 @@
     <title>Chatbot Mr M</title>
     <style>
         /* Algemene styling */
+        html {
+            height: 100%;
+        }
+
         body {
             margin: 0;
             font-family: "Josefin Sans", sans-serif;
             display: flex;
             flex-direction: column;
-            height: 100vh;
+            height: 100%;
+            min-height: 100vh;
+            min-height: 100dvh;
             overflow: hidden;
             /* Voorkom scrollen van het hele lichaam */
         }
@@ -175,6 +181,16 @@
             background-color: #f1f1f1;
             border-top: 1px solid #0093e1;
             flex-shrink: 0;
+            position: sticky;
+            bottom: 0;
+            z-index: 10;
+        }
+
+        .chat-input form {
+            display: flex;
+            width: 100%;
+            gap: 10px;
+            align-items: flex-end;
         }
 
         .chat-input textarea {
@@ -185,10 +201,11 @@
             padding: 10px;
             font-size: 14px;
             font-family: sans-serif;
+            min-height: 42px;
+            box-sizing: border-box;
         }
 
         .chat-input button {
-            margin-left: 10px;
             padding: 10px 20px;
             background-color: #00d501;
             border-radius: 5px;
@@ -294,6 +311,56 @@
                 opacity: 1;
             }
         }
+
+        /* Op mobiel geven we de berichten meer breedte en houden we de invoerbalk zichtbaar. */
+        @media (max-width: 768px) {
+            .chat-header {
+                padding: 10px 12px;
+            }
+
+            .chat-header img {
+                width: 42px;
+                height: 42px;
+                margin-right: 10px;
+                transform: none;
+            }
+
+            .chat-header h1 {
+                font-size: 18px;
+            }
+
+            .chat-header p {
+                font-size: 11px;
+            }
+
+            .chat-messages {
+                padding: 10px;
+            }
+
+            .chat-message.user,
+            .chat-message.bot,
+            .chat-message.system {
+                max-width: 88%;
+            }
+
+            .chat-input {
+                padding: 8px;
+            }
+
+            .chat-input form {
+                gap: 8px;
+            }
+
+            .chat-input textarea {
+                font-size: 16px;
+            }
+
+            .chat-input button {
+                padding: 10px 14px;
+                font-size: 14px;
+                white-space: nowrap;
+            }
+        }
     </style>
 </head>
 
@@ -341,7 +408,7 @@
 
     <!-- Invoerveld -->
     <div class="chat-input">
-        <form action="ChatGptMrM.php" id="chat-form" method="POST" style="display: flex; width: 100%;">
+        <form action="ChatGptMrM.php" id="chat-form" method="POST">
             <textarea id="user-input" name="user" placeholder="Typ hier je bericht..." rows="1" required style="flex: 1;"></textarea>
             <input type='hidden' name='page' id='page' value='<?php echo $_SERVER['REQUEST_URI']; ?>'>
             <button type="submit">Verstuur</button>
