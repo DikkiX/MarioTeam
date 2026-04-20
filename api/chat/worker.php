@@ -322,10 +322,18 @@ function haalGespreksContextOp($conn, $cookie, $actiefBerichtId, $maxBerichten =
 // Eerst voegen we wat eerdere context toe en daarna de nieuwste vraag.
 function maakBerichtenVoorOpenAi($conn, $bericht)
 {
+    global $univ_one, $univ_web, $univ_nin, $univ_web_text, $univ_mar, $univ_zoeken;
+    include_once $_SERVER['DOCUMENT_ROOT'] . '/include/ChatGPT/mrM.php';
+
+    $basisPrompt = 'Je bent een klantenservice assistent voor MarioSwitch.nl. Als je live data nodig hebt, gebruik je een functie. Geef geen data op basis van aannames als een functie nodig is. Noem nooit exacte voorraadaantallen aan klanten. Zeg alleen of iets op voorraad is of niet. Voor orderdata moet de klant eerst zowel een bestelnummer als het juiste e-mailadres geven.';
+
+    // Voeg de originele Mr M tone of voice toe
+    $systemPrompt = $basisPrompt . "\n\n" . ($systemMrM ?? '');
+
     $messages = [
         [
             'role' => 'system',
-            'content' => 'Je bent een klantenservice assistent voor MarioSwitch.nl. Als je live data nodig hebt, gebruik je een functie. Geef geen data op basis van aannames als een functie nodig is. Noem nooit exacte voorraadaantallen aan klanten. Zeg alleen of iets op voorraad is of niet. Voor orderdata moet de klant eerst zowel een bestelnummer als het juiste e-mailadres geven.',
+            'content' => $systemPrompt,
         ],
     ];
 
