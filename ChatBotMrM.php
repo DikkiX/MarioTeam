@@ -28,6 +28,9 @@
             min-height: 100vh;
             min-height: 100dvh;
             overflow: hidden;
+            box-sizing: border-box;
+            padding-top: env(safe-area-inset-top, 0);
+            padding-bottom: env(safe-area-inset-bottom, 0);
             /* Voorkom scrollen van het hele lichaam */
         }
 
@@ -345,6 +348,7 @@
 
             .chat-input {
                 padding: 8px;
+                padding-bottom: calc(8px + env(safe-area-inset-bottom, 0));
             }
 
             .chat-input form {
