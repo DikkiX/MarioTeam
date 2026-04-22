@@ -88,6 +88,25 @@ function bepaalStorageGoogleDir()
     return $fallbackBase . '/storage/google';
 }
 
+function normaliseerHostVoorBestand($host)
+{
+    $host = strtolower(trim((string) $host));
+    if ($host === '') {
+        return '';
+    }
+
+    if (strpos($host, ':') !== false) {
+        $parts = explode(':', $host);
+        $mogelijkHost = $parts[0] ?? '';
+        $mogelijkPort = $parts[1] ?? '';
+        if ($mogelijkHost !== '' && $mogelijkPort !== '' && ctype_digit($mogelijkPort)) {
+            $host = $mogelijkHost;
+        }
+    }
+
+    return $host;
+}
+
 function wisselCodeVoorTokens($code, $clientId, $clientSecret, $redirectUri)
 {
     // Dit is de standaard OAuth stap:
@@ -231,7 +250,10 @@ if (!is_array($exchange) || empty($exchange['ok'])) {
 }
 
 $tokenData = $exchange['data'] ?? [];
-$host = $_SERVER['HTTP_HOST'] ?? 'unknown';
+$host = normaliseerHostVoorBestand($_SERVER['HTTP_HOST'] ?? 'unknown');
+if ($host === '') {
+    $host = 'unknown';
+}
 
 // Tokens opslaan op de server.
 if (!schrijfTokenBestand($host, $tokenData)) {

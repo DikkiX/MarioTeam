@@ -197,28 +197,54 @@ function bepaalStorageGoogleDir()
     return $fallbackBase . '/storage/google';
 }
 
+function normaliseerHostVoorBestand($host)
+{
+    $host = strtolower(trim((string) $host));
+    if ($host === '') {
+        return '';
+    }
+
+    if (strpos($host, ':') !== false) {
+        $parts = explode(':', $host);
+        $mogelijkHost = $parts[0] ?? '';
+        $mogelijkPort = $parts[1] ?? '';
+        if ($mogelijkHost !== '' && $mogelijkPort !== '' && ctype_digit($mogelijkPort)) {
+            $host = $mogelijkHost;
+        }
+    }
+
+    return $host;
+}
+
 function leesTokenBestandVoorHost($host)
 {
     $storageDir = bepaalStorageGoogleDir();
-    $safeHost = preg_replace('/[^a-zA-Z0-9._-]/', '_', (string) $host);
-    $filePath = $storageDir . '/oauth_token_' . $safeHost . '.json';
-    if (is_file($filePath)) {
-        return $filePath;
+    $hostRaw = trim((string) $host);
+    $hostNorm = normaliseerHostVoorBestand($hostRaw);
+
+    $kandidaten = [];
+    if ($hostRaw !== '') {
+        $kandidaten[] = $hostRaw;
+    }
+    if ($hostNorm !== '' && $hostNorm !== $hostRaw) {
+        $kandidaten[] = $hostNorm;
     }
 
-    if (substr((string) $host, 0, 4) === 'www.') {
-        $without = substr($host, 4);
-        $safe2 = preg_replace('/[^a-zA-Z0-9._-]/', '_', (string) $without);
-        $file2 = $storageDir . '/oauth_token_' . $safe2 . '.json';
-        if (is_file($file2)) {
-            return $file2;
+    foreach ($kandidaten as $h) {
+        $h = strtolower((string) $h);
+        $varianten = [$h];
+        if (substr($h, 0, 4) === 'www.') {
+            $varianten[] = substr($h, 4);
+        } else {
+            $varianten[] = 'www.' . $h;
         }
-    } else {
-        $with = 'www.' . $host;
-        $safe2 = preg_replace('/[^a-zA-Z0-9._-]/', '_', (string) $with);
-        $file2 = $storageDir . '/oauth_token_' . $safe2 . '.json';
-        if (is_file($file2)) {
-            return $file2;
+
+        foreach ($varianten as $v) {
+            $safe = preg_replace('/[^a-zA-Z0-9._-]/', '_', (string) $v);
+            $filePath = $storageDir . '/oauth_token_' . $safe . '.json';
+            if (is_file($filePath)) {
+                return $filePath;
+            }
         }
     }
 
