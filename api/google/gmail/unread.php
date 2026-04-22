@@ -663,8 +663,8 @@ function haalDatabaseConnectieVoorEmailConcepten()
 {
     // We hebben een database nodig om concepten op te slaan.
     // In deze codebase maakt include/db.inc de PDO connectie aan als $conn.
-    include_once $_SERVER['DOCUMENT_ROOT'] . '/include/db.inc';
     global $conn;
+    include_once $_SERVER['DOCUMENT_ROOT'] . '/include/db.inc';
     return $conn ?? null;
 }
 
