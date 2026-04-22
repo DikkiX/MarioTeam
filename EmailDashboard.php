@@ -17,6 +17,44 @@ function e($value)
     return htmlspecialchars((string) $value, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
 }
 
+function haalBasicAuthUitHeaders()
+{
+    $user = $_SERVER['PHP_AUTH_USER'] ?? null;
+    $pass = $_SERVER['PHP_AUTH_PW'] ?? null;
+    if (is_string($user) && is_string($pass)) {
+        return ['user' => $user, 'pass' => $pass];
+    }
+
+    $auth = $_SERVER['HTTP_AUTHORIZATION'] ?? ($_SERVER['Authorization'] ?? null);
+    if (!is_string($auth) && function_exists('getallheaders')) {
+        $headers = getallheaders();
+        if (is_array($headers)) {
+            $auth = $headers['Authorization'] ?? ($headers['authorization'] ?? null);
+        }
+    }
+
+    if (!is_string($auth) || $auth === '') {
+        return null;
+    }
+
+    if (stripos($auth, 'Basic ') !== 0) {
+        return null;
+    }
+
+    $encoded = trim(substr($auth, 6));
+    if ($encoded === '') {
+        return null;
+    }
+
+    $decoded = base64_decode($encoded, true);
+    if ($decoded === false || strpos($decoded, ':') === false) {
+        return null;
+    }
+
+    [$u, $p] = explode(':', $decoded, 2);
+    return ['user' => $u, 'pass' => $p];
+}
+
 function vereisDashboardLogin()
 {
     $user = getProjectEnvValue('EMAIL_DASHBOARD_USER');
@@ -26,8 +64,9 @@ function vereisDashboardLogin()
         stuurHtml(500, '<h1>Configuratie ontbreekt</h1><p>EMAIL_DASHBOARD_USER en EMAIL_DASHBOARD_PASS ontbreken in .env.</p>');
     }
 
-    $gegevenUser = $_SERVER['PHP_AUTH_USER'] ?? null;
-    $gegevenPass = $_SERVER['PHP_AUTH_PW'] ?? null;
+    $gegeven = haalBasicAuthUitHeaders();
+    $gegevenUser = is_array($gegeven) ? ($gegeven['user'] ?? null) : null;
+    $gegevenPass = is_array($gegeven) ? ($gegeven['pass'] ?? null) : null;
 
     $isOk = is_string($gegevenUser)
         && is_string($gegevenPass)
