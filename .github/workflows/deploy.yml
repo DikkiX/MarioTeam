@@ -52,6 +52,8 @@ jobs:
             --exclude-glob Oud \
             --exclude-glob node_modules \
             --exclude-glob vendor \
+            --exclude-glob storage/google \
+            --exclude-glob storage/google/* \
             ./ "$DOELMAP"
           bye
           EOF
