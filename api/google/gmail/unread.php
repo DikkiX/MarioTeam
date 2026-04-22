@@ -3,14 +3,17 @@ include_once $_SERVER['DOCUMENT_ROOT'] . '/include/env.php';
 
 session_start();
 
-// Dit is een beveiligde testpagina om te bewijzen dat Gmail API werkt.
-// Het haalt ongelezen mails op en laat zien:
-// - afzender (From)
-// - thread id
-// - tekst (zover mogelijk plain-text)
+// Dit is een testpagina voor US11.
+// Doel: laten zien dat we met de officiële Gmail API kunnen inloggen en mails kunnen lezen.
+// Wat je op het scherm ziet:
+// - From = wie het heeft gestuurd
+// - Subject = onderwerp
+// - Thread ID = gesprek-id (handig voor later om te antwoorden in dezelfde thread)
+// - Tekst = de inhoud van de mail (zo goed mogelijk als plain text)
 
 function stuurHtml($httpStatus, $titel, $bodyHtml)
 {
+    // Dit endpoint wordt in de browser geopend, daarom geven we HTML terug.
     http_response_code($httpStatus);
     header('Content-Type: text/html; charset=utf-8');
     $titelEsc = htmlspecialchars((string) $titel, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
@@ -28,6 +31,7 @@ function e($value)
 
 function csrfToken()
 {
+    // Dit token zorgt dat alleen onze eigen login-form deze actie mag uitvoeren.
     if (!isset($_SESSION['csrf'])) {
         $_SESSION['csrf'] = bin2hex(random_bytes(16));
     }
@@ -36,6 +40,7 @@ function csrfToken()
 
 function vereisCsrf()
 {
+    // Als dit niet klopt, is het geen echte login-post van onze pagina.
     $token = isset($_POST['csrf']) ? (string) $_POST['csrf'] : '';
     if (!isset($_SESSION['csrf']) || !hash_equals((string) $_SESSION['csrf'], $token)) {
         stuurHtml(400, 'Ongeldige aanvraag', '<p>CSRF token klopt niet.</p>');
@@ -44,6 +49,7 @@ function vereisCsrf()
 
 function renderLoginPagina($melding = '')
 {
+    // Deze pagina is beveiligd met een simpele login uit .env.
     $csrf = csrfToken();
     $msgHtml = '';
     if (is_string($melding) && $melding !== '') {
@@ -68,6 +74,8 @@ function renderLoginPagina($melding = '')
 
 function vereisLogin()
 {
+    // Hier checken we of je bent ingelogd.
+    // De gebruikersnaam en wachtwoord komen uit de server .env.
     $user = getProjectEnvValue('EMAIL_DASHBOARD_USER');
     $pass = getProjectEnvValue('EMAIL_DASHBOARD_PASS');
 
@@ -76,6 +84,7 @@ function vereisLogin()
     }
 
     if (isset($_POST['actie']) && (string) $_POST['actie'] === 'login') {
+        // Dit is de login actie die door het form wordt verstuurd.
         vereisCsrf();
         $gegevenUser = isset($_POST['user']) ? (string) $_POST['user'] : '';
         $gegevenPass = isset($_POST['pass']) ? (string) $_POST['pass'] : '';
@@ -103,6 +112,8 @@ function vereisLogin()
 
 function base64UrlDecode($data)
 {
+    // Gmail API geeft mail-inhoud vaak terug als base64url.
+    // Dit zet dat om naar normale tekst.
     $data = strtr((string) $data, '-_', '+/');
     $pad = strlen($data) % 4;
     if ($pad) {
@@ -114,6 +125,7 @@ function base64UrlDecode($data)
 
 function haalHeaderOp($headers, $naam)
 {
+    // In Gmail JSON zitten mail-headers in een lijst (From, Subject, etc).
     if (!is_array($headers)) {
         return null;
     }
@@ -131,6 +143,8 @@ function haalHeaderOp($headers, $naam)
 
 function zoekTekstPlainInPayload($payload)
 {
+    // We zoeken naar het "text/plain" deel van de mail.
+    // Als dat er niet is, gebruiken we later de snippet als fallback.
     if (!is_array($payload)) {
         return null;
     }
