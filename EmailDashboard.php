@@ -148,6 +148,28 @@ function normaliseerHostVoorBestand($host)
     return $host;
 }
 
+function lijstTokenBestandenInDir($storageDir)
+{
+    if (!is_string($storageDir) || $storageDir === '' || !is_dir($storageDir)) {
+        return [];
+    }
+
+    $files = glob(rtrim($storageDir, '/') . '/oauth_token_*.json');
+    if (!is_array($files)) {
+        return [];
+    }
+
+    $result = [];
+    foreach ($files as $f) {
+        if (is_string($f) && is_file($f)) {
+            $result[] = $f;
+        }
+    }
+
+    sort($result);
+    return $result;
+}
+
 function leesTokenBestandVoorHost($host)
 {
     $storageDir = bepaalStorageGoogleDir();
@@ -178,6 +200,11 @@ function leesTokenBestandVoorHost($host)
                 return $filePath;
             }
         }
+    }
+
+    $alleTokens = lijstTokenBestandenInDir($storageDir);
+    if (count($alleTokens) === 1) {
+        return $alleTokens[0];
     }
 
     return null;

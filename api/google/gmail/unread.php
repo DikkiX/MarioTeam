@@ -216,6 +216,28 @@ function normaliseerHostVoorBestand($host)
     return $host;
 }
 
+function lijstTokenBestandenInDir($storageDir)
+{
+    if (!is_string($storageDir) || $storageDir === '' || !is_dir($storageDir)) {
+        return [];
+    }
+
+    $files = glob(rtrim($storageDir, '/') . '/oauth_token_*.json');
+    if (!is_array($files)) {
+        return [];
+    }
+
+    $result = [];
+    foreach ($files as $f) {
+        if (is_string($f) && is_file($f)) {
+            $result[] = $f;
+        }
+    }
+
+    sort($result);
+    return $result;
+}
+
 function leesTokenBestandVoorHost($host)
 {
     $storageDir = bepaalStorageGoogleDir();
@@ -246,6 +268,11 @@ function leesTokenBestandVoorHost($host)
                 return $filePath;
             }
         }
+    }
+
+    $alleTokens = lijstTokenBestandenInDir($storageDir);
+    if (count($alleTokens) === 1) {
+        return $alleTokens[0];
     }
 
     return null;
@@ -347,7 +374,36 @@ function haalGmailAccessTokenOp()
 
     $tokenFile = leesTokenBestandVoorHost($host);
     if ($tokenFile === null) {
-        return ['ok' => false, 'error' => 'Geen tokenbestand gevonden. Doe eerst OAuth via /api/google/oauth/callback.'];
+        $basis = 'Geen tokenbestand gevonden. Doe eerst OAuth via /api/google/oauth/callback.';
+        $debug = isset($_GET['debug']) && (string) $_GET['debug'] === '1';
+        if (!$debug) {
+            return ['ok' => false, 'error' => $basis];
+        }
+
+        $storageDir = bepaalStorageGoogleDir();
+        $hostRaw = trim((string) $host);
+        $hostNorm = normaliseerHostVoorBestand($hostRaw);
+        $tokens = lijstTokenBestandenInDir($storageDir);
+
+        $html = '<div style="margin-top:12px; padding:10px 12px; border:1px solid #e5e7eb; border-radius:10px; background:#f8fafc;">';
+        $html .= '<div><b>Debug</b></div>';
+        $html .= '<div>HTTP_HOST: ' . e($_SERVER['HTTP_HOST'] ?? '') . '</div>';
+        $html .= '<div>Host raw: ' . e($hostRaw) . '</div>';
+        $html .= '<div>Host norm: ' . e($hostNorm) . '</div>';
+        $html .= '<div>DOCUMENT_ROOT: ' . e((string) ($_SERVER['DOCUMENT_ROOT'] ?? '')) . '</div>';
+        $html .= '<div>__DIR__: ' . e(__DIR__) . '</div>';
+        $html .= '<div>storage/google dir: ' . e($storageDir) . '</div>';
+        $html .= '<div>gevonden tokenbestanden: ' . e((string) count($tokens)) . '</div>';
+        if (!empty($tokens)) {
+            $html .= '<ul style="margin:6px 0 0; padding-left:18px;">';
+            foreach ($tokens as $t) {
+                $html .= '<li>' . e(basename($t)) . '</li>';
+            }
+            $html .= '</ul>';
+        }
+        $html .= '</div>';
+
+        return ['ok' => false, 'error' => $basis . $html];
     }
 
     $payload = laadTokenPayload($tokenFile);
