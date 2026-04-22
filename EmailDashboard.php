@@ -17,68 +17,6 @@ function e($value)
     return htmlspecialchars((string) $value, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
 }
 
-function haalBasicAuthUitHeaders()
-{
-    $user = $_SERVER['PHP_AUTH_USER'] ?? null;
-    $pass = $_SERVER['PHP_AUTH_PW'] ?? null;
-    if (is_string($user) && is_string($pass)) {
-        return ['user' => $user, 'pass' => $pass];
-    }
-
-    $auth = $_SERVER['HTTP_AUTHORIZATION'] ?? ($_SERVER['Authorization'] ?? null);
-    if (!is_string($auth) && function_exists('getallheaders')) {
-        $headers = getallheaders();
-        if (is_array($headers)) {
-            $auth = $headers['Authorization'] ?? ($headers['authorization'] ?? null);
-        }
-    }
-
-    if (!is_string($auth) || $auth === '') {
-        return null;
-    }
-
-    if (stripos($auth, 'Basic ') !== 0) {
-        return null;
-    }
-
-    $encoded = trim(substr($auth, 6));
-    if ($encoded === '') {
-        return null;
-    }
-
-    $decoded = base64_decode($encoded, true);
-    if ($decoded === false || strpos($decoded, ':') === false) {
-        return null;
-    }
-
-    [$u, $p] = explode(':', $decoded, 2);
-    return ['user' => $u, 'pass' => $p];
-}
-
-function vereisDashboardLogin()
-{
-    $user = getProjectEnvValue('EMAIL_DASHBOARD_USER');
-    $pass = getProjectEnvValue('EMAIL_DASHBOARD_PASS');
-
-    if ($user === null || $pass === null) {
-        stuurHtml(500, '<h1>Configuratie ontbreekt</h1><p>EMAIL_DASHBOARD_USER en EMAIL_DASHBOARD_PASS ontbreken in .env.</p>');
-    }
-
-    $gegeven = haalBasicAuthUitHeaders();
-    $gegevenUser = is_array($gegeven) ? ($gegeven['user'] ?? null) : null;
-    $gegevenPass = is_array($gegeven) ? ($gegeven['pass'] ?? null) : null;
-
-    $isOk = is_string($gegevenUser)
-        && is_string($gegevenPass)
-        && hash_equals((string) $user, (string) $gegevenUser)
-        && hash_equals((string) $pass, (string) $gegevenPass);
-
-    if (!$isOk) {
-        header('WWW-Authenticate: Basic realm="Email Dashboard"');
-        stuurHtml(401, '<h1>Niet ingelogd</h1><p>Je hebt geen toegang tot dit dashboard.</p>');
-    }
-}
-
 function csrfToken()
 {
     if (!isset($_SESSION['csrf'])) {
@@ -92,6 +30,67 @@ function vereisCsrf()
     $token = isset($_POST['csrf']) ? (string) $_POST['csrf'] : '';
     if (!isset($_SESSION['csrf']) || !hash_equals((string) $_SESSION['csrf'], $token)) {
         stuurHtml(400, '<h1>Ongeldige aanvraag</h1><p>CSRF token klopt niet.</p>');
+    }
+}
+
+function renderLoginPagina($melding = '')
+{
+    $csrf = csrfToken();
+    $msgHtml = '';
+    if (is_string($melding) && $melding !== '') {
+        $msgHtml = '<div style="background:#fee2e2; border:1px solid #ef4444; padding:10px 12px; border-radius:10px; margin-bottom:12px;">' . e($melding) . '</div>';
+    }
+
+    $html = '<!doctype html><html lang="nl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Email dashboard</title></head><body style="font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; background:#0b1220; color:#e5e7eb; margin:0; padding:20px;">';
+    $html .= '<div style="max-width: 520px; margin:0 auto; background:#0f172a; border:1px solid #1f2937; border-radius:14px; padding:16px;">';
+    $html .= '<h1 style="margin:0 0 12px; font-size:20px;">Inloggen</h1>';
+    $html .= $msgHtml;
+    $html .= '<form method="post" action="">';
+    $html .= '<input type="hidden" name="csrf" value="' . e($csrf) . '">';
+    $html .= '<input type="hidden" name="actie" value="login">';
+    $html .= '<label style="display:block; color:#cbd5e1; margin-bottom:6px;">Gebruikersnaam</label>';
+    $html .= '<input name="user" autocomplete="username" style="width:100%; box-sizing:border-box; border-radius:10px; border:1px solid #334155; background:#0b1220; color:#e5e7eb; padding:10px 12px; margin-bottom:10px;">';
+    $html .= '<label style="display:block; color:#cbd5e1; margin-bottom:6px;">Wachtwoord</label>';
+    $html .= '<input type="password" name="pass" autocomplete="current-password" style="width:100%; box-sizing:border-box; border-radius:10px; border:1px solid #334155; background:#0b1220; color:#e5e7eb; padding:10px 12px; margin-bottom:12px;">';
+    $html .= '<button type="submit" style="background:#93c5fd; border:none; color:#0b1220; font-weight:700; padding:10px 14px; border-radius:10px; cursor:pointer; width:100%;">Inloggen</button>';
+    $html .= '</form>';
+    $html .= '</div></body></html>';
+    stuurHtml(200, $html);
+}
+
+function vereisDashboardLogin()
+{
+    $user = getProjectEnvValue('EMAIL_DASHBOARD_USER');
+    $pass = getProjectEnvValue('EMAIL_DASHBOARD_PASS');
+
+    if ($user === null || $pass === null) {
+        stuurHtml(500, '<h1>Configuratie ontbreekt</h1><p>EMAIL_DASHBOARD_USER en EMAIL_DASHBOARD_PASS ontbreken in .env.</p>');
+    }
+
+    if (isset($_POST['actie']) && (string) $_POST['actie'] === 'login') {
+        vereisCsrf();
+        $gegevenUser = isset($_POST['user']) ? (string) $_POST['user'] : '';
+        $gegevenPass = isset($_POST['pass']) ? (string) $_POST['pass'] : '';
+
+        $isOk = hash_equals((string) $user, $gegevenUser) && hash_equals((string) $pass, $gegevenPass);
+        if (!$isOk) {
+            renderLoginPagina('Gebruikersnaam of wachtwoord is verkeerd.');
+        }
+
+        $_SESSION['email_dashboard_authed'] = true;
+
+        $locatie = isset($_SERVER['REQUEST_URI']) ? (string) $_SERVER['REQUEST_URI'] : '/EmailDashboard.php';
+        header('Location: ' . $locatie, true, 303);
+        exit;
+    }
+
+    if (!empty($_GET['logout'])) {
+        $_SESSION['email_dashboard_authed'] = false;
+        renderLoginPagina('Je bent uitgelogd.');
+    }
+
+    if (empty($_SESSION['email_dashboard_authed'])) {
+        renderLoginPagina();
     }
 }
 
@@ -497,7 +496,7 @@ function renderLayout($titel, $contentHtml, $melding, $meldingType)
 
     $html = '<!doctype html><html lang="nl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>' . e($titel) . '</title></head><body style="font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; background:#0b1220; color:#e5e7eb; margin:0; padding:20px;">';
     $html .= '<div style="max-width: 1100px; margin:0 auto;">';
-    $html .= '<div style="display:flex; align-items:center; justify-content:space-between; gap:16px; margin-bottom:16px;"><h1 style="margin:0; font-size:22px;">' . e($titel) . '</h1><a href="/EmailDashboard.php" style="color:#93c5fd; text-decoration:none;">Overzicht</a></div>';
+    $html .= '<div style="display:flex; align-items:center; justify-content:space-between; gap:16px; margin-bottom:16px;"><h1 style="margin:0; font-size:22px;">' . e($titel) . '</h1><div style="display:flex; gap:12px;"><a href="/EmailDashboard.php" style="color:#93c5fd; text-decoration:none;">Overzicht</a><a href="/EmailDashboard.php?logout=1" style="color:#93c5fd; text-decoration:none;">Uitloggen</a></div></div>';
     $html .= $msgHtml;
     $html .= $contentHtml;
     $html .= '</div></body></html>';

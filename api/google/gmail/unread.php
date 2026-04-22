@@ -26,42 +26,44 @@ function e($value)
     return htmlspecialchars((string) $value, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
 }
 
-function haalBasicAuthUitHeaders()
+function csrfToken()
 {
-    $user = $_SERVER['PHP_AUTH_USER'] ?? null;
-    $pass = $_SERVER['PHP_AUTH_PW'] ?? null;
-    if (is_string($user) && is_string($pass)) {
-        return ['user' => $user, 'pass' => $pass];
+    if (!isset($_SESSION['csrf'])) {
+        $_SESSION['csrf'] = bin2hex(random_bytes(16));
+    }
+    return (string) $_SESSION['csrf'];
+}
+
+function vereisCsrf()
+{
+    $token = isset($_POST['csrf']) ? (string) $_POST['csrf'] : '';
+    if (!isset($_SESSION['csrf']) || !hash_equals((string) $_SESSION['csrf'], $token)) {
+        stuurHtml(400, 'Ongeldige aanvraag', '<p>CSRF token klopt niet.</p>');
+    }
+}
+
+function renderLoginPagina($melding = '')
+{
+    $csrf = csrfToken();
+    $msgHtml = '';
+    if (is_string($melding) && $melding !== '') {
+        $msgHtml = '<div style="background:#fee2e2; border:1px solid #ef4444; padding:10px 12px; border-radius:10px; margin-bottom:12px;">' . e($melding) . '</div>';
     }
 
-    $auth = $_SERVER['HTTP_AUTHORIZATION'] ?? ($_SERVER['Authorization'] ?? null);
-    if (!is_string($auth) && function_exists('getallheaders')) {
-        $headers = getallheaders();
-        if (is_array($headers)) {
-            $auth = $headers['Authorization'] ?? ($headers['authorization'] ?? null);
-        }
-    }
-
-    if (!is_string($auth) || $auth === '') {
-        return null;
-    }
-
-    if (stripos($auth, 'Basic ') !== 0) {
-        return null;
-    }
-
-    $encoded = trim(substr($auth, 6));
-    if ($encoded === '') {
-        return null;
-    }
-
-    $decoded = base64_decode($encoded, true);
-    if ($decoded === false || strpos($decoded, ':') === false) {
-        return null;
-    }
-
-    [$u, $p] = explode(':', $decoded, 2);
-    return ['user' => $u, 'pass' => $p];
+    $html = '<div style="max-width: 520px; background:#f8fafc; border:1px solid #e5e7eb; border-radius:14px; padding:16px;">';
+    $html .= '<h2 style="margin:0 0 12px;">Inloggen</h2>';
+    $html .= $msgHtml;
+    $html .= '<form method="post" action="">';
+    $html .= '<input type="hidden" name="csrf" value="' . e($csrf) . '">';
+    $html .= '<input type="hidden" name="actie" value="login">';
+    $html .= '<label style="display:block; margin-bottom:6px;">Gebruikersnaam</label>';
+    $html .= '<input name="user" autocomplete="username" style="width:100%; box-sizing:border-box; border-radius:10px; border:1px solid #cbd5e1; padding:10px 12px; margin-bottom:10px;">';
+    $html .= '<label style="display:block; margin-bottom:6px;">Wachtwoord</label>';
+    $html .= '<input type="password" name="pass" autocomplete="current-password" style="width:100%; box-sizing:border-box; border-radius:10px; border:1px solid #cbd5e1; padding:10px 12px; margin-bottom:12px;">';
+    $html .= '<button type="submit" style="background:#111827; border:none; color:#fff; font-weight:700; padding:10px 14px; border-radius:10px; cursor:pointer; width:100%;">Inloggen</button>';
+    $html .= '</form>';
+    $html .= '</div>';
+    stuurHtml(200, 'Gmail API test', $html);
 }
 
 function vereisLogin()
@@ -73,18 +75,29 @@ function vereisLogin()
         stuurHtml(500, 'Configuratie ontbreekt', '<p>EMAIL_DASHBOARD_USER en EMAIL_DASHBOARD_PASS ontbreken in .env.</p>');
     }
 
-    $gegeven = haalBasicAuthUitHeaders();
-    $gegevenUser = is_array($gegeven) ? ($gegeven['user'] ?? null) : null;
-    $gegevenPass = is_array($gegeven) ? ($gegeven['pass'] ?? null) : null;
+    if (isset($_POST['actie']) && (string) $_POST['actie'] === 'login') {
+        vereisCsrf();
+        $gegevenUser = isset($_POST['user']) ? (string) $_POST['user'] : '';
+        $gegevenPass = isset($_POST['pass']) ? (string) $_POST['pass'] : '';
 
-    $isOk = is_string($gegevenUser)
-        && is_string($gegevenPass)
-        && hash_equals((string) $user, (string) $gegevenUser)
-        && hash_equals((string) $pass, (string) $gegevenPass);
+        $isOk = hash_equals((string) $user, $gegevenUser) && hash_equals((string) $pass, $gegevenPass);
+        if (!$isOk) {
+            renderLoginPagina('Gebruikersnaam of wachtwoord is verkeerd.');
+        }
 
-    if (!$isOk) {
-        header('WWW-Authenticate: Basic realm="Gmail API"');
-        stuurHtml(401, 'Niet ingelogd', '<p>Je hebt geen toegang tot dit endpoint.</p>');
+        $_SESSION['email_dashboard_authed'] = true;
+        $locatie = isset($_SERVER['REQUEST_URI']) ? (string) $_SERVER['REQUEST_URI'] : '/api/google/gmail/unread.php';
+        header('Location: ' . $locatie, true, 303);
+        exit;
+    }
+
+    if (!empty($_GET['logout'])) {
+        $_SESSION['email_dashboard_authed'] = false;
+        renderLoginPagina('Je bent uitgelogd.');
+    }
+
+    if (empty($_SESSION['email_dashboard_authed'])) {
+        renderLoginPagina();
     }
 }
 
