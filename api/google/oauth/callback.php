@@ -62,7 +62,7 @@ function bepaalStorageGoogleDir()
         $kandidaten[] = rtrim($docroot, '/');
     }
 
-    $projectRoot = realpath(__DIR__ . '/../../../');
+    $projectRoot = realpath(__DIR__ . '/../../../../');
     if (is_string($projectRoot) && $projectRoot !== '') {
         $kandidaten[] = rtrim($projectRoot, '/');
     }
