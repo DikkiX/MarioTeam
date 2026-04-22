@@ -162,9 +162,38 @@ function normaliseerTekst($text)
     return trim((string) $text);
 }
 
+function bepaalStorageGoogleDir()
+{
+    $kandidaten = [];
+
+    $docroot = $_SERVER['DOCUMENT_ROOT'] ?? '';
+    if (is_string($docroot) && $docroot !== '') {
+        $kandidaten[] = rtrim($docroot, '/');
+    }
+
+    $projectRoot = realpath(__DIR__ . '/../../../');
+    if (is_string($projectRoot) && $projectRoot !== '') {
+        $kandidaten[] = rtrim($projectRoot, '/');
+    }
+
+    foreach ($kandidaten as $base) {
+        if (!is_string($base) || $base === '') {
+            continue;
+        }
+
+        $dir = $base . '/storage/google';
+        if (is_dir($dir)) {
+            return $dir;
+        }
+    }
+
+    $fallbackBase = isset($kandidaten[0]) ? (string) $kandidaten[0] : rtrim((string) ($_SERVER['DOCUMENT_ROOT'] ?? ''), '/');
+    return $fallbackBase . '/storage/google';
+}
+
 function leesTokenBestandVoorHost($host)
 {
-    $storageDir = rtrim((string) $_SERVER['DOCUMENT_ROOT'], '/') . '/storage/google';
+    $storageDir = bepaalStorageGoogleDir();
     $safeHost = preg_replace('/[^a-zA-Z0-9._-]/', '_', (string) $host);
     $filePath = $storageDir . '/oauth_token_' . $safeHost . '.json';
     if (is_file($filePath)) {

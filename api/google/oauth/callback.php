@@ -53,6 +53,35 @@ function bepaalRedirectPad()
     return '/api/google/oauth/callback';
 }
 
+function bepaalStorageGoogleDir()
+{
+    $kandidaten = [];
+
+    $docroot = $_SERVER['DOCUMENT_ROOT'] ?? '';
+    if (is_string($docroot) && $docroot !== '') {
+        $kandidaten[] = rtrim($docroot, '/');
+    }
+
+    $projectRoot = realpath(__DIR__ . '/../../../');
+    if (is_string($projectRoot) && $projectRoot !== '') {
+        $kandidaten[] = rtrim($projectRoot, '/');
+    }
+
+    foreach ($kandidaten as $base) {
+        if (!is_string($base) || $base === '') {
+            continue;
+        }
+
+        $dir = $base . '/storage/google';
+        if (is_dir($dir)) {
+            return $dir;
+        }
+    }
+
+    $fallbackBase = isset($kandidaten[0]) ? (string) $kandidaten[0] : rtrim((string) ($_SERVER['DOCUMENT_ROOT'] ?? ''), '/');
+    return $fallbackBase . '/storage/google';
+}
+
 function wisselCodeVoorTokens($code, $clientId, $clientSecret, $redirectUri)
 {
     // Dit is de standaard OAuth stap:
@@ -122,7 +151,7 @@ function schrijfTokenBestand($host, $tokenData)
 {
     // We slaan tokens op in storage, zodat de server er later bij kan.
     // We tonen tokens niet in de browser.
-    $storageDir = rtrim((string) $_SERVER['DOCUMENT_ROOT'], '/') . '/storage/google';
+    $storageDir = bepaalStorageGoogleDir();
     if (!is_dir($storageDir)) {
         @mkdir($storageDir, 0700, true);
     }
