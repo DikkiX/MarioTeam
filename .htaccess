@@ -8,3 +8,4 @@ RewriteRule ^api/chat/status/?$ api/chat/status.php [L,QSA]
 
 # Dit pad start het worker-script.
 RewriteRule ^api/chat/worker/?$ api/chat/worker.php [L,QSA]
+RewriteRule ^api/google/oauth/callback/?$ api/google/oauth/callback.php [L,QSA]
