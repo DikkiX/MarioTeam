@@ -55,30 +55,36 @@ function bepaalRedirectPad()
 
 function bepaalStorageGoogleDir()
 {
-    $kandidaten = [];
+    $startDirs = [];
+
+    $startDirs[] = __DIR__;
 
     $docroot = $_SERVER['DOCUMENT_ROOT'] ?? '';
     if (is_string($docroot) && $docroot !== '') {
-        $kandidaten[] = rtrim($docroot, '/');
+        $startDirs[] = $docroot;
     }
 
-    $projectRoot = realpath(__DIR__ . '/../../../../');
-    if (is_string($projectRoot) && $projectRoot !== '') {
-        $kandidaten[] = rtrim($projectRoot, '/');
-    }
-
-    foreach ($kandidaten as $base) {
-        if (!is_string($base) || $base === '') {
+    foreach ($startDirs as $start) {
+        if (!is_string($start) || trim($start) === '') {
             continue;
         }
 
-        $dir = $base . '/storage/google';
-        if (is_dir($dir)) {
-            return $dir;
+        $dir = rtrim($start, '/');
+        for ($i = 0; $i < 10; $i++) {
+            $candidate = $dir . '/storage/google';
+            if (is_dir($candidate)) {
+                return $candidate;
+            }
+
+            $parent = dirname($dir);
+            if ($parent === $dir) {
+                break;
+            }
+            $dir = $parent;
         }
     }
 
-    $fallbackBase = isset($kandidaten[0]) ? (string) $kandidaten[0] : rtrim((string) ($_SERVER['DOCUMENT_ROOT'] ?? ''), '/');
+    $fallbackBase = is_string($docroot) && $docroot !== '' ? rtrim($docroot, '/') : rtrim(__DIR__, '/');
     return $fallbackBase . '/storage/google';
 }
 
