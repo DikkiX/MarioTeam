@@ -171,6 +171,9 @@ function zoekTekstPlainInPayload($payload)
 
 function normaliseerTekst($text)
 {
+    // Dit maakt de tekst leesbaar op het scherm:
+    // - Windows regels omzetten naar normale regels
+    // - meerdere lege regels beperken
     $text = str_replace(["\r\n", "\r"], "\n", (string) $text);
     $text = preg_replace("/\n{3,}/", "\n\n", $text);
     return trim((string) $text);
@@ -178,6 +181,8 @@ function normaliseerTekst($text)
 
 function bepaalStorageGoogleDir()
 {
+    // We moeten het tokenbestand kunnen vinden op de server.
+    // Hosting kan soms een rare DOCUMENT_ROOT geven, dus we zoeken "omhoog" tot we storage/google zien.
     $startDirs = [];
 
     $startDirs[] = __DIR__;
@@ -213,6 +218,8 @@ function bepaalStorageGoogleDir()
 
 function normaliseerHostVoorBestand($host)
 {
+    // Soms geeft de server HTTP_HOST met een poort (bijv. marioswitch1.nl:443).
+    // Dit maakt er een nette host van, zodat de bestandsnaam klopt.
     $host = strtolower(trim((string) $host));
     if ($host === '') {
         return '';
@@ -232,6 +239,8 @@ function normaliseerHostVoorBestand($host)
 
 function lijstTokenBestandenInDir($storageDir)
 {
+    // Dit haalt alle tokenbestanden op uit de storage map.
+    // Handig als we niet precies weten hoe het bestand heet.
     if (!is_string($storageDir) || $storageDir === '' || !is_dir($storageDir)) {
         return [];
     }
@@ -254,6 +263,8 @@ function lijstTokenBestandenInDir($storageDir)
 
 function leesTokenBestandVoorHost($host)
 {
+    // We proberen het juiste tokenbestand te vinden voor dit domein (met/zonder www).
+    // Als er maar 1 tokenbestand bestaat, gebruiken we die automatisch.
     $storageDir = bepaalStorageGoogleDir();
     $hostRaw = trim((string) $host);
     $hostNorm = normaliseerHostVoorBestand($hostRaw);
@@ -294,6 +305,7 @@ function leesTokenBestandVoorHost($host)
 
 function laadTokenPayload($tokenFilePath)
 {
+    // Dit leest de JSON uit het tokenbestand en zet het om naar een PHP array.
     $raw = @file_get_contents($tokenFilePath);
     if (!is_string($raw) || trim($raw) === '') {
         return null;
@@ -307,6 +319,7 @@ function laadTokenPayload($tokenFilePath)
 
 function slaTokenPayloadOp($tokenFilePath, $payload)
 {
+    // Als we een access token hebben ververst, slaan we het nieuwe token weer op in hetzelfde bestand.
     $json = json_encode($payload, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
     if (!is_string($json)) {
         return false;
@@ -321,6 +334,8 @@ function slaTokenPayloadOp($tokenFilePath, $payload)
 
 function tokenIsVerlopen($payload)
 {
+    // Access tokens verlopen snel (meestal ~1 uur).
+    // Als hij verlopen is, moeten we refreshen met de refresh_token.
     if (!is_array($payload) || !isset($payload['saved_at']) || !isset($payload['token']) || !is_array($payload['token'])) {
         return true;
     }
@@ -337,6 +352,7 @@ function tokenIsVerlopen($payload)
 
 function refreshAccessToken($clientId, $clientSecret, $refreshToken)
 {
+    // Dit vraagt een nieuw access_token aan bij Google met de refresh_token.
     $postData = http_build_query([
         'client_id' => $clientId,
         'client_secret' => $clientSecret,
@@ -375,6 +391,10 @@ function refreshAccessToken($clientId, $clientSecret, $refreshToken)
 
 function haalGmailAccessTokenOp()
 {
+    // Dit is de hoofd-functie voor "inloggen":
+    // - We lezen het tokenbestand
+    // - We controleren of het access_token nog geldig is
+    // - Zo niet, dan refreshen we automatisch
     $clientId = getProjectEnvValue('GOOGLE_OAUTH_CLIENT_ID');
     $clientSecret = getProjectEnvValue('GOOGLE_OAUTH_CLIENT_SECRET');
     if ($clientId === null || $clientSecret === null) {
@@ -471,6 +491,8 @@ function haalGmailAccessTokenOp()
 
 function gmailApiRequest($method, $path, $accessToken, $query = [])
 {
+    // Dit is een simpele helper om een Gmail API request te doen (GET/POST etc).
+    // We sturen het access_token mee als Bearer token.
     $url = 'https://gmail.googleapis.com/gmail/v1/' . ltrim((string) $path, '/');
     if (!empty($query)) {
         $url .= '?' . http_build_query($query, '', '&', PHP_QUERY_RFC3986);
@@ -508,6 +530,7 @@ function gmailApiRequest($method, $path, $accessToken, $query = [])
 
 vereisLogin();
 
+// Dit bepaalt hoeveel mails we maximaal laten zien op het scherm.
 $max = isset($_GET['max']) ? (int) $_GET['max'] : 5;
 if ($max <= 0) {
     $max = 5;
@@ -516,6 +539,7 @@ if ($max > 20) {
     $max = 20;
 }
 
+// Dit regelt dat we een werkend access_token hebben (en dus echt met Gmail kunnen praten).
 $token = haalGmailAccessTokenOp();
 if (empty($token['ok'])) {
     $msg = isset($token['error']) ? (string) $token['error'] : 'Geen Gmail token.';
@@ -543,6 +567,7 @@ if (!is_array($messages) || empty($messages)) {
 
 $itemsHtml = '';
 foreach ($messages as $m) {
+    // Voor elke mail-id halen we daarna de volledige mail op, zodat we headers en tekst kunnen lezen.
     if (!is_array($m) || empty($m['id'])) {
         continue;
     }
@@ -565,6 +590,8 @@ foreach ($messages as $m) {
     $from = haalHeaderOp($headers, 'From') ?? '';
     $subject = haalHeaderOp($headers, 'Subject') ?? '';
 
+    // We proberen eerst echte plain-text uit de mail te halen.
+    // Als dat niet lukt, tonen we de "snippet" van Gmail (kort stukje tekst).
     $text = zoekTekstPlainInPayload($payload);
     if (!is_string($text) || $text === '') {
         $text = isset($data['snippet']) ? (string) $data['snippet'] : '';
