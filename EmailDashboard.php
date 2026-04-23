@@ -453,6 +453,46 @@ function zoekTekstPlainInPayload($payload)
     return null;
 }
 
+function zoekTekstHtmlInPayload($payload)
+{
+    // Sommige mails hebben alleen HTML (geen text/plain).
+    // Deze functie zet HTML om naar normale tekst, zodat we het in het dashboard kunnen tonen.
+    if (!is_array($payload)) {
+        return null;
+    }
+
+    if (isset($payload['mimeType']) && (string) $payload['mimeType'] === 'text/html') {
+        $data = $payload['body']['data'] ?? null;
+        if (is_string($data) && $data !== '') {
+            $decoded = base64UrlDecode($data);
+            if ($decoded === '') {
+                return null;
+            }
+
+            $html = str_replace(["\r\n", "\r"], "\n", $decoded);
+            $html = preg_replace('/<\s*br\s*\/?\s*>/i', "\n", $html);
+            $html = preg_replace('/<\/\s*p\s*>/i', "\n\n", $html);
+            $html = preg_replace('/<\/\s*div\s*>/i', "\n", $html);
+            $text = strip_tags($html);
+            $text = html_entity_decode((string) $text, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+            $text = preg_replace("/\n{3,}/", "\n\n", (string) $text);
+            $text = trim((string) $text);
+            return $text !== '' ? $text : null;
+        }
+    }
+
+    if (isset($payload['parts']) && is_array($payload['parts'])) {
+        foreach ($payload['parts'] as $part) {
+            $found = zoekTekstHtmlInPayload($part);
+            if (is_string($found) && $found !== '') {
+                return $found;
+            }
+        }
+    }
+
+    return null;
+}
+
 function normaliseerTekst($text)
 {
     $text = str_replace(["\r\n", "\r"], "\n", (string) $text);
@@ -484,6 +524,17 @@ vereisDashboardLogin();
 
 $melding = null;
 $meldingType = 'ok';
+
+if (isset($_SESSION['email_dashboard_flash']) && is_array($_SESSION['email_dashboard_flash'])) {
+    $flash = $_SESSION['email_dashboard_flash'];
+    unset($_SESSION['email_dashboard_flash']);
+    if (isset($flash['melding'])) {
+        $melding = (string) $flash['melding'];
+    }
+    if (isset($flash['type'])) {
+        $meldingType = (string) $flash['type'];
+    }
+}
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     vereisCsrf();
@@ -561,8 +612,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             ':tekst' => $nieuweTekst,
                             ':id' => $conceptId,
                         ]);
-                        $meldingType = 'ok';
-                        $melding = 'Concept is verstuurd en op sent gezet.';
+                        $_SESSION['email_dashboard_flash'] = [
+                            'type' => 'ok',
+                            'melding' => 'Concept is verstuurd en op sent gezet.',
+                        ];
+                        header('Location: /EmailDashboard.php', true, 303);
+                        exit;
                     }
                 }
             }
@@ -591,116 +646,133 @@ function renderLayout($titel, $contentHtml, $melding, $meldingType)
     return $html;
 }
 
-if ($id <= 0) {
-    $stmt = $conn->prepare("SELECT id, gmail_thread_id, klant_email, created_at FROM email_concepten WHERE status = 'draft' ORDER BY created_at ASC");
-    $stmt->execute();
-    $rows = $stmt->fetchAll();
+$stmt = $conn->prepare("SELECT id, gmail_thread_id, klant_email, created_at FROM email_concepten WHERE status = 'draft' ORDER BY created_at DESC");
+$stmt->execute();
+$rows = $stmt->fetchAll();
 
-    $table = '<div style="background:#0f172a; border:1px solid #1f2937; border-radius:14px; overflow:hidden;">';
-    $table .= '<div style="padding:14px 16px; border-bottom:1px solid #1f2937; color:#cbd5e1;">Openstaande concepten (draft)</div>';
-    if (empty($rows)) {
-        $table .= '<div style="padding:16px; color:#9ca3af;">Geen draft concepten gevonden.</div>';
-    } else {
-        $table .= '<table style="width:100%; border-collapse:collapse;">';
-        $table .= '<thead><tr style="text-align:left; color:#cbd5e1; background:#0b1220;"><th style="padding:10px 12px;">ID</th><th style="padding:10px 12px;">Klant</th><th style="padding:10px 12px;">Thread</th><th style="padding:10px 12px;">Aangemaakt</th><th style="padding:10px 12px;"></th></tr></thead><tbody>';
-        foreach ($rows as $r) {
-            $table .= '<tr style="border-top:1px solid #1f2937;">';
-            $table .= '<td style="padding:10px 12px; color:#e5e7eb;">' . e($r['id']) . '</td>';
-            $table .= '<td style="padding:10px 12px; color:#e5e7eb;">' . e($r['klant_email']) . '</td>';
-            $table .= '<td style="padding:10px 12px; color:#9ca3af;">' . e($r['gmail_thread_id']) . '</td>';
-            $table .= '<td style="padding:10px 12px; color:#9ca3af;">' . e($r['created_at']) . '</td>';
-            $table .= '<td style="padding:10px 12px;"><a href="/EmailDashboard.php?id=' . urlencode((string) $r['id']) . '" style="color:#93c5fd; text-decoration:none;">Open</a></td>';
-            $table .= '</tr>';
-        }
-        $table .= '</tbody></table>';
-    }
-    $table .= '</div>';
-
-    stuurHtml(200, renderLayout('Email dashboard', $table, $melding, $meldingType));
-}
-
-$stmt = $conn->prepare("SELECT id, gmail_thread_id, klant_email, concept_tekst, status, created_at FROM email_concepten WHERE id = :id LIMIT 1");
-$stmt->execute([':id' => $id]);
-$concept = $stmt->fetch();
-
-if (!$concept) {
-    stuurHtml(404, renderLayout('Email dashboard', '<p>Concept niet gevonden.</p>', $melding, $meldingType));
-}
-
-$origineelTekst = null;
-$origineelMeta = null;
-$token = haalGmailAccessTokenOp();
-if (!empty($token['ok'])) {
-    $accessToken = (string) $token['access_token'];
-    $threadId = (string) $concept['gmail_thread_id'];
-    $thread = gmailApiRequest('GET', 'users/me/threads/' . rawurlencode($threadId), $accessToken, null, ['format' => 'full']);
-    if (!empty($thread['ok']) && isset($thread['data']['messages']) && is_array($thread['data']['messages'])) {
-        $messages = $thread['data']['messages'];
-        $klant = (string) $concept['klant_email'];
-        $gevonden = null;
-        foreach (array_reverse($messages) as $m) {
-            if (!is_array($m) || !isset($m['payload']['headers'])) {
-                continue;
-            }
-            $from = haalHeaderOp($m['payload']['headers'], 'From');
-            if (is_string($from) && $from !== '' && stripos($from, $klant) !== false) {
-                $gevonden = $m;
-                break;
-            }
-        }
-        if ($gevonden === null) {
-            $last = end($messages);
-            if (is_array($last)) {
-                $gevonden = $last;
-            }
-        }
-        if (is_array($gevonden)) {
-            $h = $gevonden['payload']['headers'] ?? [];
-            $sub = haalHeaderOp($h, 'Subject');
-            $from = haalHeaderOp($h, 'From');
-            $date = haalHeaderOp($h, 'Date');
-            $origineelMeta = trim('Subject: ' . ($sub ?? '') . "\nFrom: " . ($from ?? '') . "\nDate: " . ($date ?? ''));
-            $text = zoekTekstPlainInPayload($gevonden['payload'] ?? []);
-            if (!is_string($text) || $text === '') {
-                $text = isset($gevonden['snippet']) ? (string) $gevonden['snippet'] : '';
-            }
-            $origineelTekst = normaliseerTekst($text);
-        }
+$concept = null;
+if ($id > 0) {
+    $sel = $conn->prepare("SELECT id, gmail_thread_id, klant_email, concept_tekst, status, created_at FROM email_concepten WHERE id = :id LIMIT 1");
+    $sel->execute([':id' => $id]);
+    $concept = $sel->fetch();
+    if (!$concept) {
+        $meldingType = 'error';
+        $melding = 'Concept niet gevonden.';
+        $id = 0;
     }
 }
 
-$kolommen = '<div style="display:grid; grid-template-columns: 1fr 1fr; gap:16px;">';
-$kolommen .= '<div style="background:#0f172a; border:1px solid #1f2937; border-radius:14px; padding:14px 16px; min-height:220px;">';
-$kolommen .= '<div style="color:#cbd5e1; margin-bottom:10px;">Originele klantmail</div>';
-if (is_string($origineelTekst) && $origineelTekst !== '') {
-    $meta = is_string($origineelMeta) && $origineelMeta !== '' ? ($origineelMeta . "\n\n") : '';
-    $kolommen .= '<pre style="white-space:pre-wrap; margin:0; color:#e5e7eb;">' . e($meta . $origineelTekst) . '</pre>';
+$lijstHtml = '<div style="background:#0f172a; border:1px solid #1f2937; border-radius:14px; overflow:hidden;">';
+$lijstHtml .= '<div style="padding:14px 16px; border-bottom:1px solid #1f2937; color:#cbd5e1;">Openstaande concepten (draft)</div>';
+if (empty($rows)) {
+    $lijstHtml .= '<div style="padding:16px; color:#9ca3af;">Geen draft concepten gevonden.</div>';
 } else {
-    $kolommen .= '<div style="color:#9ca3af;">Niet beschikbaar. OAuth/token of thread ophalen is nog niet gelukt.</div>';
+    $lijstHtml .= '<div style="padding:10px;">';
+    foreach ($rows as $r) {
+        $isActief = ($id > 0 && (int) $r['id'] === (int) $id);
+        $bg = $isActief ? '#0b1220' : '#111827';
+        $border = $isActief ? '#93c5fd' : '#1f2937';
+        $lijstHtml .= '<a href="/EmailDashboard.php?id=' . urlencode((string) $r['id']) . '" style="display:block; text-decoration:none; border:1px solid ' . $border . '; background:' . $bg . '; border-radius:12px; padding:10px 12px; margin-bottom:10px;">';
+        $lijstHtml .= '<div style="display:flex; justify-content:space-between; gap:8px; align-items:center;">';
+        $lijstHtml .= '<div style="color:#e5e7eb; font-weight:700;">Concept #' . e($r['id']) . '</div>';
+        $lijstHtml .= '<div style="color:#9ca3af; font-size:12px;">' . e($r['created_at']) . '</div>';
+        $lijstHtml .= '</div>';
+        $lijstHtml .= '<div style="color:#cbd5e1; font-size:13px; margin-top:4px;">Klant: ' . e($r['klant_email']) . '</div>';
+        $lijstHtml .= '<div style="color:#64748b; font-size:12px; margin-top:2px;">Thread: ' . e($r['gmail_thread_id']) . '</div>';
+        $lijstHtml .= '</a>';
+    }
+    $lijstHtml .= '</div>';
 }
-$kolommen .= '</div>';
+$lijstHtml .= '</div>';
 
-$kolommen .= '<div style="background:#0f172a; border:1px solid #1f2937; border-radius:14px; padding:14px 16px;">';
-$kolommen .= '<div style="color:#cbd5e1; margin-bottom:10px;">AI concept (aanpasbaar)</div>';
-$kolommen .= '<form method="post" action="/EmailDashboard.php?id=' . urlencode((string) $concept['id']) . '">';
-$kolommen .= '<input type="hidden" name="csrf" value="' . e($csrf) . '">';
-$kolommen .= '<input type="hidden" name="actie" value="send">';
-$kolommen .= '<input type="hidden" name="id" value="' . e($concept['id']) . '">';
-$kolommen .= '<textarea name="concept_tekst" rows="14" style="width:100%; box-sizing:border-box; border-radius:10px; border:1px solid #334155; background:#0b1220; color:#e5e7eb; padding:10px 12px; resize:vertical;">' . e((string) $concept['concept_tekst']) . '</textarea>';
-$kolommen .= '<div style="display:flex; gap:10px; align-items:center; justify-content:space-between; margin-top:10px;">';
-$kolommen .= '<div style="color:#9ca3af; font-size:13px;">Status: ' . e((string) $concept['status']) . '</div>';
-$disabled = ((string) $concept['status'] !== 'draft') ? 'disabled' : '';
-$btnStyle = 'background:#22c55e; border:none; color:#052e16; font-weight:700; padding:10px 14px; border-radius:10px; cursor:pointer;';
-$btnStyleDisabled = 'background:#334155; color:#94a3b8; cursor:not-allowed;';
-$kolommen .= '<button type="submit" ' . $disabled . ' style="' . ($disabled ? $btnStyleDisabled : $btnStyle) . '">Versturen</button>';
-$kolommen .= '</div>';
-$kolommen .= '</form>';
-$kolommen .= '</div>';
-$kolommen .= '</div>';
+$detailHtml = '<div style="background:#0f172a; border:1px solid #1f2937; border-radius:14px; padding:14px 16px; min-height:420px;">';
+if (!$concept) {
+    $detailHtml .= '<div style="color:#cbd5e1; font-weight:700; margin-bottom:10px;">Geselecteerd concept</div>';
+    $detailHtml .= '<div style="color:#9ca3af;">Klik links een concept aan om de originele klantmail en het AI-concept te bekijken.</div>';
+    $detailHtml .= '</div>';
+} else {
+    $origineelTekst = null;
+    $origineelMeta = null;
+    $token = haalGmailAccessTokenOp();
+    if (!empty($token['ok'])) {
+        $accessToken = (string) $token['access_token'];
+        $threadId = (string) $concept['gmail_thread_id'];
+        $thread = gmailApiRequest('GET', 'users/me/threads/' . rawurlencode($threadId), $accessToken, null, ['format' => 'full']);
+        if (!empty($thread['ok']) && isset($thread['data']['messages']) && is_array($thread['data']['messages'])) {
+            $messages = $thread['data']['messages'];
+            $klant = (string) $concept['klant_email'];
+            $gevonden = null;
+            foreach (array_reverse($messages) as $m) {
+                if (!is_array($m) || !isset($m['payload']['headers'])) {
+                    continue;
+                }
+                $from = haalHeaderOp($m['payload']['headers'], 'From');
+                if (is_string($from) && $from !== '' && stripos($from, $klant) !== false) {
+                    $gevonden = $m;
+                    break;
+                }
+            }
+            if ($gevonden === null) {
+                $last = end($messages);
+                if (is_array($last)) {
+                    $gevonden = $last;
+                }
+            }
+            if (is_array($gevonden)) {
+                $h = $gevonden['payload']['headers'] ?? [];
+                $sub = haalHeaderOp($h, 'Subject');
+                $from = haalHeaderOp($h, 'From');
+                $date = haalHeaderOp($h, 'Date');
+                $origineelMeta = trim('Subject: ' . ($sub ?? '') . "\nFrom: " . ($from ?? '') . "\nDate: " . ($date ?? ''));
+                $text = zoekTekstPlainInPayload($gevonden['payload'] ?? []);
+                if (!is_string($text) || $text === '') {
+                    $text = zoekTekstHtmlInPayload($gevonden['payload'] ?? []);
+                }
+                if (!is_string($text) || $text === '') {
+                    $text = isset($gevonden['snippet']) ? (string) $gevonden['snippet'] : '';
+                }
+                $origineelTekst = normaliseerTekst($text);
+            }
+        }
+    }
 
-$info = '<div style="margin-bottom:12px; color:#cbd5e1;">';
-$info .= '<div style="color:#9ca3af; font-size:13px;">Concept ID: ' . e($concept['id']) . ' | Klant: ' . e($concept['klant_email']) . ' | Thread: ' . e($concept['gmail_thread_id']) . '</div>';
-$info .= '</div>';
+    $detailHtml .= '<div style="display:flex; justify-content:space-between; gap:12px; align-items:flex-start; margin-bottom:12px;">';
+    $detailHtml .= '<div>';
+    $detailHtml .= '<div style="color:#e5e7eb; font-weight:800;">Geselecteerd concept #' . e($concept['id']) . '</div>';
+    $detailHtml .= '<div style="color:#9ca3af; font-size:13px;">Klant: ' . e($concept['klant_email']) . ' | Thread: ' . e($concept['gmail_thread_id']) . '</div>';
+    $detailHtml .= '</div>';
+    $detailHtml .= '<div style="color:#9ca3af; font-size:13px;">Status: ' . e((string) $concept['status']) . '</div>';
+    $detailHtml .= '</div>';
 
-$content = $info . $kolommen;
-stuurHtml(200, renderLayout('Email dashboard', $content, $melding, $meldingType));
+    $detailHtml .= '<div style="display:grid; grid-template-columns: 1fr 1fr; gap:16px;">';
+    $detailHtml .= '<div style="border:1px solid #1f2937; border-radius:14px; padding:12px 14px; background:#0b1220; min-height:220px;">';
+    $detailHtml .= '<div style="color:#cbd5e1; margin-bottom:10px;">Originele klantmail</div>';
+    if (is_string($origineelTekst) && $origineelTekst !== '') {
+        $meta = is_string($origineelMeta) && $origineelMeta !== '' ? ($origineelMeta . "\n\n") : '';
+        $detailHtml .= '<pre style="white-space:pre-wrap; margin:0; color:#e5e7eb;">' . e($meta . $origineelTekst) . '</pre>';
+    } else {
+        $detailHtml .= '<div style="color:#9ca3af;">Niet beschikbaar. OAuth/token of thread ophalen is nog niet gelukt.</div>';
+    }
+    $detailHtml .= '</div>';
+
+    $detailHtml .= '<div style="border:1px solid #1f2937; border-radius:14px; padding:12px 14px; background:#0b1220;">';
+    $detailHtml .= '<div style="color:#cbd5e1; margin-bottom:10px;">AI concept (aanpasbaar)</div>';
+    $detailHtml .= '<form method="post" action="/EmailDashboard.php?id=' . urlencode((string) $concept['id']) . '">';
+    $detailHtml .= '<input type="hidden" name="csrf" value="' . e($csrf) . '">';
+    $detailHtml .= '<input type="hidden" name="actie" value="send">';
+    $detailHtml .= '<input type="hidden" name="id" value="' . e($concept['id']) . '">';
+    $detailHtml .= '<textarea name="concept_tekst" rows="14" style="width:100%; box-sizing:border-box; border-radius:10px; border:1px solid #334155; background:#0b1220; color:#e5e7eb; padding:10px 12px; resize:vertical;">' . e((string) $concept['concept_tekst']) . '</textarea>';
+    $detailHtml .= '<div style="display:flex; gap:10px; align-items:center; justify-content:flex-end; margin-top:10px;">';
+    $disabled = ((string) $concept['status'] !== 'draft') ? 'disabled' : '';
+    $btnStyle = 'background:#22c55e; border:none; color:#052e16; font-weight:800; padding:10px 14px; border-radius:10px; cursor:pointer;';
+    $btnStyleDisabled = 'background:#334155; color:#94a3b8; cursor:not-allowed; border:none; font-weight:800; padding:10px 14px; border-radius:10px;';
+    $detailHtml .= '<button type="submit" ' . $disabled . ' style="' . ($disabled ? $btnStyleDisabled : $btnStyle) . '">Verstuur mail via Gmail API</button>';
+    $detailHtml .= '</div>';
+    $detailHtml .= '</form>';
+    $detailHtml .= '</div>';
+    $detailHtml .= '</div>';
+    $detailHtml .= '</div>';
+}
+
+$grid = '<div style="display:grid; grid-template-columns: 380px 1fr; gap:16px; align-items:start;">' . $lijstHtml . $detailHtml . '</div>';
+stuurHtml(200, renderLayout('Email dashboard', $grid, $melding, $meldingType));
