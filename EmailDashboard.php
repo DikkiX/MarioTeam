@@ -480,6 +480,9 @@ function zoekTekstHtmlInPayload($payload)
             }
 
             $html = str_replace(["\r\n", "\r"], "\n", $decoded);
+            $html = preg_replace('/<\s*head\b[^>]*>[\s\S]*?<\s*\/\s*head\s*>/i', '', (string) $html);
+            $html = preg_replace('/<\s*style\b[^>]*>[\s\S]*?<\s*\/\s*style\s*>/i', '', (string) $html);
+            $html = preg_replace('/<\s*script\b[^>]*>[\s\S]*?<\s*\/\s*script\s*>/i', '', (string) $html);
             $html = preg_replace('/<\s*br\s*\/?\s*>/i', "\n", $html);
             $html = preg_replace('/<\/\s*p\s*>/i', "\n\n", $html);
             $html = preg_replace('/<\/\s*div\s*>/i', "\n", $html);
@@ -508,6 +511,189 @@ function normaliseerTekst($text)
     $text = str_replace(["\r\n", "\r"], "\n", (string) $text);
     $text = preg_replace("/\n{3,}/", "\n\n", $text);
     return trim((string) $text);
+}
+
+function haalHtmlUitPayload($payload)
+{
+    // Sommige mails hebben alleen HTML, dit haalt de ruwe HTML string uit de payload.
+    if (!is_array($payload)) {
+        return null;
+    }
+
+    if (isset($payload['mimeType']) && (string) $payload['mimeType'] === 'text/html') {
+        $data = $payload['body']['data'] ?? null;
+        if (is_string($data) && $data !== '') {
+            $decoded = base64UrlDecode($data);
+            return $decoded !== '' ? $decoded : null;
+        }
+    }
+
+    if (isset($payload['parts']) && is_array($payload['parts'])) {
+        foreach ($payload['parts'] as $part) {
+            $found = haalHtmlUitPayload($part);
+            if (is_string($found) && $found !== '') {
+                return $found;
+            }
+        }
+    }
+
+    return null;
+}
+
+function sanitizeEmailHtmlVoorDashboard($html)
+{
+    // We willen opmaak tonen, maar geen scripts/styling/rare attributen uitvoeren.
+    $html = str_replace(["\r\n", "\r"], "\n", (string) $html);
+    $html = preg_replace('/<\s*head\b[^>]*>[\s\S]*?<\s*\/\s*head\s*>/i', '', (string) $html);
+    $html = preg_replace('/<\s*style\b[^>]*>[\s\S]*?<\s*\/\s*style\s*>/i', '', (string) $html);
+    $html = preg_replace('/<\s*script\b[^>]*>[\s\S]*?<\s*\/\s*script\s*>/i', '', (string) $html);
+    $html = preg_replace('/<\s*meta\b[^>]*>/i', '', (string) $html);
+    $html = preg_replace('/<\s*link\b[^>]*>/i', '', (string) $html);
+
+    $allowed = '<p><br><b><strong><i><em><u><ul><ol><li><a><table><thead><tbody><tr><td><th><div><span><hr>';
+    $html = strip_tags((string) $html, $allowed);
+
+    $html = preg_replace('/\son\w+\s*=\s*"[^"]*"/i', '', (string) $html);
+    $html = preg_replace("/\son\w+\s*=\s*'[^']*'/i", '', (string) $html);
+    $html = preg_replace('/\son\w+\s*=\s*[^\s>]+/i', '', (string) $html);
+
+    $html = preg_replace('/\sstyle\s*=\s*"[^"]*"/i', '', (string) $html);
+    $html = preg_replace("/\sstyle\s*=\s*'[^']*'/i", '', (string) $html);
+    $html = preg_replace('/\sclass\s*=\s*"[^"]*"/i', '', (string) $html);
+    $html = preg_replace("/\sclass\s*=\s*'[^']*'/i", '', (string) $html);
+
+    $html = preg_replace_callback('/<\s*a\b([^>]*)>/i', function ($m) {
+        $attrs = (string) ($m[1] ?? '');
+        $href = '';
+        if (preg_match('/href\s*=\s*"([^"]*)"/i', $attrs, $hm) === 1) {
+            $href = (string) ($hm[1] ?? '');
+        } elseif (preg_match("/href\s*=\s*'([^']*)'/i", $attrs, $hm) === 1) {
+            $href = (string) ($hm[1] ?? '');
+        }
+
+        $href = trim($href);
+        if ($href !== '' && preg_match('/^\s*javascript:/i', $href) === 1) {
+            $href = '';
+        }
+
+        if ($href === '') {
+            return '<a>';
+        }
+
+        return '<a href="' . htmlspecialchars($href, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') . '" target="_blank" rel="noopener noreferrer">';
+    }, (string) $html);
+
+    $html = preg_replace("/\n{3,}/", "\n\n", (string) $html);
+    $html = trim((string) $html);
+    return $html;
+}
+
+function parseerEmailAdresUitFromHeader($fromHeader)
+{
+    // We willen alleen het e-mailadres uit de From header.
+    $fromHeader = trim((string) $fromHeader);
+    if ($fromHeader === '') {
+        return '';
+    }
+
+    if (preg_match('/[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}/i', $fromHeader, $m) === 1) {
+        $candidate = trim((string) ($m[0] ?? ''));
+        return filter_var($candidate, FILTER_VALIDATE_EMAIL) ? $candidate : '';
+    }
+
+    return '';
+}
+
+function bestaatEmailConceptVoorThread($conn, $threadId)
+{
+    // Zo maken we geen dubbele concepten voor dezelfde thread.
+    $stmt = $conn->prepare("
+        SELECT id
+        FROM email_concepten
+        WHERE gmail_thread_id = :thread_id
+          AND status IN ('draft', 'sent')
+        LIMIT 1
+    ");
+    $stmt->execute([
+        ':thread_id' => (string) $threadId,
+    ]);
+
+    return (bool) $stmt->fetch();
+}
+
+function voegEmailConceptToe($conn, $threadId, $klantEmail, $conceptTekst)
+{
+    // Dit slaat het concept op als draft.
+    $stmt = $conn->prepare("
+        INSERT INTO email_concepten (gmail_thread_id, klant_email, concept_tekst, status)
+        VALUES (:thread_id, :klant_email, :concept_tekst, 'draft')
+    ");
+    $stmt->execute([
+        ':thread_id' => (string) $threadId,
+        ':klant_email' => (string) $klantEmail,
+        ':concept_tekst' => (string) $conceptTekst,
+    ]);
+
+    return (int) $conn->lastInsertId();
+}
+
+function roepOpenAiAanVoorEmailConcept($onderwerp, $klantTekst)
+{
+    // Dit maakt een concept-antwoord op basis van de klantmail.
+    $apiKey = getProjectEnvValue('OPENAI_API_KEY');
+    if ($apiKey === null || $apiKey === '') {
+        return ['ok' => false, 'error' => 'OPENAI_API_KEY ontbreekt in .env.'];
+    }
+
+    $system = 'Je schrijft een concept-antwoord voor de klantenservice van de webshops van MarioTeam. Schrijf in het Nederlands. Als informatie ontbreekt, stel eerst korte, duidelijke vragen. Geef geen exacte voorraadaantallen. Als de klant om ordergegevens vraagt, vraag eerst om bestelnummer + e-mailadres. Geef alleen het antwoord (geen uitleg over je stappen).';
+    $user = "Onderwerp: " . (string) $onderwerp . "\n\nKlantmail:\n" . (string) $klantTekst;
+
+    $data = [
+        'model' => 'gpt-4.1-mini',
+        'messages' => [
+            ['role' => 'system', 'content' => $system],
+            ['role' => 'user', 'content' => $user],
+        ],
+        'temperature' => 0.2,
+        'max_completion_tokens' => 900,
+    ];
+
+    $ch = curl_init('https://api.openai.com/v1/chat/completions');
+    curl_setopt($ch, CURLOPT_POST, true);
+    curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($data));
+    curl_setopt($ch, CURLOPT_HTTPHEADER, [
+        'Content-Type: application/json',
+        'Authorization: Bearer ' . $apiKey,
+    ]);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 45);
+
+    $raw = curl_exec($ch);
+    $err = curl_error($ch);
+    $status = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+
+    if ($raw === false) {
+        return ['ok' => false, 'error' => 'OpenAI curl fout: ' . (string) $err];
+    }
+
+    $decoded = json_decode($raw, true);
+    if (!is_array($decoded)) {
+        return ['ok' => false, 'error' => 'OpenAI gaf geen geldige JSON terug.'];
+    }
+
+    if ($status < 200 || $status >= 300) {
+        $msg = isset($decoded['error']['message']) ? (string) $decoded['error']['message'] : 'Onbekende OpenAI fout';
+        return ['ok' => false, 'error' => $msg];
+    }
+
+    $content = $decoded['choices'][0]['message']['content'] ?? '';
+    $content = is_string($content) ? trim($content) : '';
+    if ($content === '') {
+        return ['ok' => false, 'error' => 'OpenAI gaf geen tekst terug.'];
+    }
+
+    return ['ok' => true, 'content' => $content];
 }
 
 function bouwRfc2822Bericht($toEmail, $subject, $bodyText, $inReplyTo = null, $references = null)
@@ -680,6 +866,96 @@ function renderLayout($titel, $contentHtml, $melding, $meldingType)
     return $html;
 }
 
+$heeftNetGesynct = false;
+$syncFout = null;
+$cooldownSec = 30;
+$vorigeSync = isset($_SESSION['email_dashboard_sync_at']) ? (int) $_SESSION['email_dashboard_sync_at'] : 0;
+$magSync = (time() - $vorigeSync) >= $cooldownSec;
+if ($magSync) {
+    // Bij openen/refresh halen we nieuwe ongelezen mails op en maken we er concepten van.
+    $_SESSION['email_dashboard_sync_at'] = time();
+    $token = haalGmailAccessTokenOp();
+    if (!empty($token['ok'])) {
+        $accessToken = (string) $token['access_token'];
+        $lijst = gmailApiRequest('GET', 'users/me/messages', $accessToken, null, [
+            'labelIds' => 'INBOX',
+            'q' => 'is:unread',
+            'maxResults' => 5,
+        ]);
+
+        if (!empty($lijst['ok'])) {
+            $messages = $lijst['data']['messages'] ?? [];
+            if (is_array($messages)) {
+                foreach ($messages as $m) {
+                    if (!is_array($m) || empty($m['id'])) {
+                        continue;
+                    }
+
+                    $msgId = (string) $m['id'];
+                    $detail = gmailApiRequest('GET', 'users/me/messages/' . rawurlencode($msgId), $accessToken, null, [
+                        'format' => 'full',
+                    ]);
+                    if (empty($detail['ok'])) {
+                        continue;
+                    }
+
+                    $data = $detail['data'] ?? [];
+                    $threadId = isset($data['threadId']) ? (string) $data['threadId'] : '';
+                    $payload = $data['payload'] ?? [];
+                    $headers = is_array($payload) && isset($payload['headers']) ? $payload['headers'] : [];
+                    $from = haalHeaderOp($headers, 'From') ?? '';
+                    $subject = haalHeaderOp($headers, 'Subject') ?? '';
+                    $klantEmail = parseerEmailAdresUitFromHeader($from);
+
+                    if ($threadId === '' || $klantEmail === '') {
+                        continue;
+                    }
+
+                    if (bestaatEmailConceptVoorThread($conn, $threadId)) {
+                        continue;
+                    }
+
+                    $text = zoekTekstPlainInPayload($payload);
+                    if (!is_string($text) || $text === '') {
+                        $text = zoekTekstHtmlInPayload($payload);
+                    }
+                    if (!is_string($text) || $text === '') {
+                        $text = isset($data['snippet']) ? (string) $data['snippet'] : '';
+                    }
+                    $text = normaliseerTekst($text);
+                    if ($text === '') {
+                        continue;
+                    }
+
+                    $ai = roepOpenAiAanVoorEmailConcept($subject, $text);
+                    if (empty($ai['ok'])) {
+                        continue;
+                    }
+
+                    $conceptTekst = (string) $ai['content'];
+                    if ($conceptTekst === '') {
+                        continue;
+                    }
+
+                    voegEmailConceptToe($conn, $threadId, $klantEmail, $conceptTekst);
+                    $heeftNetGesynct = true;
+                }
+            }
+        }
+    } else {
+        $syncFout = isset($token['error']) ? (string) $token['error'] : 'Gmail token ontbreekt.';
+    }
+}
+
+if ($heeftNetGesynct && (!is_string($melding) || $melding === '')) {
+    $meldingType = 'ok';
+    $melding = 'Nieuwe ongelezen mails zijn toegevoegd als concept.';
+}
+if (is_string($syncFout) && $syncFout !== '' && (!is_string($melding) || $melding === '')) {
+    $meldingType = 'error';
+    $melding = $syncFout;
+}
+
 $stmt = $conn->prepare("SELECT id, gmail_thread_id, klant_email, created_at FROM email_concepten WHERE status = 'draft' ORDER BY created_at DESC");
 $stmt->execute();
 $rows = $stmt->fetchAll();
@@ -702,13 +978,43 @@ $lijstHtml .= '<div style="padding:12px 14px; border-bottom:1px solid #9ca3af; f
 if (empty($rows)) {
     $lijstHtml .= '<div style="padding:14px; color:#6b7280;">Geen draft concepten gevonden.</div>';
 } else {
+    $onderwerpCache = [];
+    $tokenVoorOnderwerp = haalGmailAccessTokenOp();
+    $accessTokenVoorOnderwerp = !empty($tokenVoorOnderwerp['ok']) ? (string) $tokenVoorOnderwerp['access_token'] : '';
     $lijstHtml .= '<div style="padding:10px;">';
     foreach ($rows as $r) {
         $isActief = ($id > 0 && (int) $r['id'] === (int) $id);
         $bg = $isActief ? '#bfdbfe' : '#e5e7eb';
         $border = $isActief ? '#60a5fa' : '#9ca3af';
+        $threadId = isset($r['gmail_thread_id']) ? (string) $r['gmail_thread_id'] : '';
+        $onderwerp = '';
+        if ($accessTokenVoorOnderwerp !== '' && $threadId !== '') {
+            if (isset($onderwerpCache[$threadId])) {
+                $onderwerp = (string) $onderwerpCache[$threadId];
+            } else {
+                $t = gmailApiRequest('GET', 'users/me/threads/' . rawurlencode($threadId), $accessTokenVoorOnderwerp, null, [
+                    'format' => 'metadata',
+                    'metadataHeaders' => 'Subject',
+                ]);
+                if (!empty($t['ok']) && isset($t['data']['messages']) && is_array($t['data']['messages'])) {
+                    $messages = $t['data']['messages'];
+                    $last = end($messages);
+                    if (is_array($last) && isset($last['payload']['headers'])) {
+                        $sub = haalHeaderOp($last['payload']['headers'], 'Subject');
+                        if (is_string($sub) && $sub !== '') {
+                            $onderwerp = $sub;
+                        }
+                    }
+                }
+                $onderwerpCache[$threadId] = $onderwerp;
+            }
+        }
+        $titelLinks = $onderwerp !== '' ? $onderwerp : ('Concept #' . (string) $r['id']);
+        if (strlen($titelLinks) > 90) {
+            $titelLinks = substr($titelLinks, 0, 90) . '...';
+        }
         $lijstHtml .= '<a href="/EmailDashboard.php?id=' . urlencode((string) $r['id']) . '" style="display:block; text-decoration:none; border:1px solid ' . $border . '; background:' . $bg . '; border-radius:12px; padding:10px 12px; margin-bottom:10px;">';
-        $lijstHtml .= '<div style="font-weight:800; color:#111827;">Concept #' . e($r['id']) . '</div>';
+        $lijstHtml .= '<div style="font-weight:800; color:#111827;">' . e($titelLinks) . '</div>';
         $lijstHtml .= '<div style="margin-top:4px; color:#111827; font-size:13px;">Datum: ' . e($r['created_at']) . '</div>';
         $lijstHtml .= '<div style="margin-top:2px; color:#111827; font-size:13px;">Status: draft</div>';
         $lijstHtml .= '<div style="margin-top:2px; color:#111827; font-size:13px;">Klant: ' . e($r['klant_email']) . '</div>';
@@ -725,6 +1031,7 @@ if (!$concept) {
     $detailHtml .= '</div>';
 } else {
     $origineelTekst = null;
+    $origineelHtml = '';
     $origineelOnderwerp = '';
     $token = haalGmailAccessTokenOp();
     if (!empty($token['ok'])) {
@@ -759,6 +1066,12 @@ if (!$concept) {
                 if (is_string($sub) && $sub !== '') {
                     $origineelOnderwerp = $sub;
                 }
+
+                $rawHtml = haalHtmlUitPayload($gevonden['payload'] ?? []);
+                if (is_string($rawHtml) && trim($rawHtml) !== '') {
+                    $origineelHtml = sanitizeEmailHtmlVoorDashboard($rawHtml);
+                }
+
                 $text = zoekTekstPlainInPayload($gevonden['payload'] ?? []);
                 if (!is_string($text) || $text === '') {
                     $text = zoekTekstHtmlInPayload($gevonden['payload'] ?? []);
@@ -776,7 +1089,9 @@ if (!$concept) {
 
     $detailHtml .= '<div style="border:1px solid #9ca3af; background:#ffffff; border-radius:12px; padding:10px 12px; margin-bottom:12px;">';
     $detailHtml .= '<div style="font-weight:800; margin-bottom:6px;">Originele Klantvraag:</div>';
-    if (is_string($origineelTekst) && $origineelTekst !== '') {
+    if (is_string($origineelHtml) && $origineelHtml !== '') {
+        $detailHtml .= '<div style="background:#ffffff; color:#111827; font-size:14px; line-height:1.45;">' . $origineelHtml . '</div>';
+    } elseif (is_string($origineelTekst) && $origineelTekst !== '') {
         $detailHtml .= '<div style="white-space:pre-wrap;">' . e($origineelTekst) . '</div>';
     } else {
         $detailHtml .= '<div style="color:#6b7280;">Niet beschikbaar. OAuth/token of thread ophalen is nog niet gelukt.</div>';
