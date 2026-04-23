@@ -11,6 +11,44 @@ function stuurJsonResponse($httpStatus, $data)
     exit;
 }
 
+function zorgDashboardSettingsTabel($conn)
+{
+    $conn->exec("
+        CREATE TABLE IF NOT EXISTS `dashboard_settings` (
+            `setting_key` VARCHAR(64) NOT NULL,
+            `setting_value` LONGTEXT NOT NULL,
+            `updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            PRIMARY KEY (`setting_key`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    ");
+}
+
+function haalOfMaakWorkerSecret($conn)
+{
+    // Dit is de secret die het worker endpoint beschermt.
+    // Als hij nog niet bestaat, maken we hem 1 keer aan en slaan we hem op in de database.
+    try {
+        zorgDashboardSettingsTabel($conn);
+        $stmt = $conn->prepare("SELECT setting_value FROM dashboard_settings WHERE setting_key = 'chat_worker_secret' LIMIT 1");
+        $stmt->execute();
+        $row = $stmt->fetch();
+        if ($row && isset($row['setting_value']) && trim((string) $row['setting_value']) !== '') {
+            return trim((string) $row['setting_value']);
+        }
+
+        $nieuw = bin2hex(random_bytes(32));
+        $save = $conn->prepare("
+            INSERT INTO dashboard_settings (setting_key, setting_value)
+            VALUES ('chat_worker_secret', :v)
+            ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value)
+        ");
+        $save->execute([':v' => $nieuw]);
+        return $nieuw;
+    } catch (Throwable) {
+        return '';
+    }
+}
+
 function triggerWorkerOpAchtergrond($berichtId)
 {
     $host = $_SERVER['SERVER_NAME'] ?? 'www.marioswitch1.nl';
@@ -23,6 +61,12 @@ function triggerWorkerOpAchtergrond($berichtId)
     $socketHost = ($isHttps ? 'ssl://' : '') . $host;
     $secret = getProjectEnvValue('CHAT_WORKER_SECRET');
     $secret = is_string($secret) ? trim($secret) : '';
+    if ($secret === '') {
+        global $conn;
+        if (isset($conn) && $conn) {
+            $secret = haalOfMaakWorkerSecret($conn);
+        }
+    }
     $body = http_build_query([
         'message_id' => $berichtId,
         'worker_secret' => $secret,
