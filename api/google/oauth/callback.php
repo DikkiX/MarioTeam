@@ -13,13 +13,14 @@ function stuurHtmlResponse($httpStatus, $titel, $bericht)
     // We laten een simpele HTML pagina zien (in plaats van JSON),
     // omdat dit in de browser wordt geopend.
     http_response_code($httpStatus);
+    header('X-Robots-Tag: noindex, nofollow', true);
     header('Content-Type: text/html; charset=utf-8');
 
     // We zetten tekst om naar "veilig" HTML zodat er geen rare tekens/HTML kan worden uitgevoerd.
     $titelEsc = htmlspecialchars((string) $titel, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
     $berichtEsc = htmlspecialchars((string) $bericht, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
 
-    echo "<!doctype html><html lang=\"nl\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>{$titelEsc}</title></head><body style=\"font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; padding: 24px;\"><h1 style=\"margin: 0 0 12px;\">{$titelEsc}</h1><p style=\"margin: 0; line-height: 1.4;\">{$berichtEsc}</p></body></html>";
+    echo "<!doctype html><html lang=\"nl\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><meta name=\"robots\" content=\"noindex, nofollow\"><title>{$titelEsc}</title></head><body style=\"font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; padding: 24px;\"><h1 style=\"margin: 0 0 12px;\">{$titelEsc}</h1><p style=\"margin: 0; line-height: 1.4;\">{$berichtEsc}</p></body></html>";
     exit;
 }
 

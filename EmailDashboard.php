@@ -8,6 +8,7 @@ function stuurHtml($httpStatus, $html)
 {
     // Dit dashboard draait als webpagina, daarom sturen we HTML terug.
     http_response_code($httpStatus);
+    header('X-Robots-Tag: noindex, nofollow', true);
     header('Content-Type: text/html; charset=utf-8');
     echo $html;
     exit;
@@ -45,7 +46,7 @@ function renderLoginPagina($melding = '')
         $msgHtml = '<div style="background:#fee2e2; border:1px solid #ef4444; padding:10px 12px; border-radius:10px; margin-bottom:12px;">' . e($melding) . '</div>';
     }
 
-    $html = '<!doctype html><html lang="nl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Email dashboard</title></head><body style="font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; background:#e5e7eb; color:#111827; margin:0; padding:22px;">';
+    $html = '<!doctype html><html lang="nl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="robots" content="noindex, nofollow"><title>Email dashboard</title></head><body style="font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; background:#e5e7eb; color:#111827; margin:0; padding:22px;">';
     $html .= '<div style="max-width: 520px; margin:0 auto; background:#f3f4f6; border:1px solid #9ca3af; border-radius:14px; padding:16px;">';
     $html .= '<div style="font-weight:800; font-size:18px; margin-bottom:12px;">Mario Team - AI E-mail Concepten Module</div>';
     $html .= '<h1 style="margin:0 0 12px; font-size:18px;">Inloggen</h1>';
@@ -928,7 +929,7 @@ function renderLayout($titel, $contentHtml, $melding, $meldingType)
         $msgHtml = '<div style="background:' . $bg . '; border:1px solid ' . $bd . '; padding:10px 12px; border-radius:10px; margin:12px 0;">' . e($melding) . '</div>';
     }
 
-    $html = '<!doctype html><html lang="nl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>' . e($titel) . '</title><style>:root{--grid-main-cols:360px 1fr;--grid-settings-cols:260px 1fr;--list-max-h:calc(100vh - 220px);}@media (max-width: 900px){:root{--grid-main-cols:1fr;--grid-settings-cols:1fr;--list-max-h:260px;}body{padding:14px!important;}}</style></head><body style="font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; background:#e5e7eb; color:#111827; margin:0; padding:22px;">';
+    $html = '<!doctype html><html lang="nl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="robots" content="noindex, nofollow"><title>' . e($titel) . '</title><style>:root{--grid-main-cols:360px 1fr;--grid-settings-cols:260px 1fr;--list-max-h:calc(100vh - 220px);}@media (max-width: 900px){:root{--grid-main-cols:1fr;--grid-settings-cols:1fr;--list-max-h:260px;}body{padding:14px!important;}}</style></head><body style="font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; background:#e5e7eb; color:#111827; margin:0; padding:22px;">';
     $html .= '<div style="max-width: 1200px; margin:0 auto;">';
     $html .= '<div style="display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:12px; margin-bottom:14px; padding:10px 12px; background:#f3f4f6; border:1px solid #9ca3af; border-radius:12px;">';
     $html .= '<div style="font-weight:800; font-size:18px;">Mario Team - AI E-mail Concepten Module</div>';

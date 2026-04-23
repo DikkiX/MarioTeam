@@ -15,9 +15,10 @@ function stuurHtml($httpStatus, $titel, $bodyHtml)
 {
     // Dit endpoint wordt in de browser geopend, daarom geven we HTML terug.
     http_response_code($httpStatus);
+    header('X-Robots-Tag: noindex, nofollow', true);
     header('Content-Type: text/html; charset=utf-8');
     $titelEsc = htmlspecialchars((string) $titel, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
-    echo '<!doctype html><html lang="nl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>' . $titelEsc . '</title></head><body style="font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; padding: 20px;">';
+    echo '<!doctype html><html lang="nl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="robots" content="noindex, nofollow"><title>' . $titelEsc . '</title></head><body style="font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; padding: 20px;">';
     echo '<h1 style="margin:0 0 12px;">' . $titelEsc . '</h1>';
     echo $bodyHtml;
     echo '</body></html>';
