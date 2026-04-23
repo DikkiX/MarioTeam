@@ -482,7 +482,9 @@ try {
 
             schrijfWorkerLog('Functie aangeroepen: ' . $functieNaam);
             $functieResultaat = voerInterneFunctieUit($conn, $functieNaam, $arguments);
-            schrijfWorkerLog('Functie-resultaat: ' . json_encode($functieResultaat, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+            $resultJson = json_encode($functieResultaat, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+            $len = is_string($resultJson) ? strlen($resultJson) : 0;
+            schrijfWorkerLog('Functie-resultaat ontvangen (' . $len . ' bytes).');
 
             // Hier geven we de ruwe database-uitkomst terug aan OpenAI.
             $messages[] = [
@@ -498,7 +500,7 @@ try {
 
         if ($definitiefAntwoord !== '') {
             updateChatQueueBericht($conn, $actiefBerichtId, 'completed', $definitiefAntwoord);
-            schrijfWorkerLog('Definitief AI-antwoord gemaakt voor bericht ' . $bericht['id'] . ': ' . $definitiefAntwoord);
+            schrijfWorkerLog('Definitief AI-antwoord gemaakt voor bericht ' . $bericht['id'] . ' (lengte ' . strlen((string) $definitiefAntwoord) . ').');
         } else {
             updateChatQueueBericht($conn, $actiefBerichtId, 'error');
             schrijfWorkerLog('Na function calling kwam er geen definitief antwoord terug.');
@@ -510,7 +512,7 @@ try {
 
         if ($directAntwoord !== '') {
             updateChatQueueBericht($conn, $actiefBerichtId, 'completed', $directAntwoord);
-            schrijfWorkerLog('OpenAI gaf direct antwoord zonder functie: ' . $directAntwoord);
+            schrijfWorkerLog('OpenAI gaf direct antwoord zonder functie (lengte ' . strlen((string) $directAntwoord) . ').');
         } else {
             updateChatQueueBericht($conn, $actiefBerichtId, 'error');
             schrijfWorkerLog('OpenAI gaf geen tekst en ook geen functie terug.');

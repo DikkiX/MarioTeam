@@ -22,12 +22,13 @@ if ($_SERVER['REQUEST_METHOD'] !== 'GET') {
 }
 
 $berichtId = isset($_GET['bericht_id']) ? (int) $_GET['bericht_id'] : 0;
+$cookie = isset($_GET['cookie']) ? trim((string) $_GET['cookie']) : '';
 
 // Zonder bericht-id weten we niet welk antwoord we moeten controleren.
-if ($berichtId <= 0) {
+if ($berichtId <= 0 || $cookie === '') {
     stuurJsonResponse(422, [
         'status' => 'error',
-        'message' => 'bericht_id is verplicht.',
+        'message' => 'bericht_id en cookie zijn verplicht.',
     ]);
 }
 
@@ -36,11 +37,12 @@ try {
     $stmt = $conn->prepare("
         SELECT id, status, ai_response
         FROM chat_queue
-        WHERE id = :id
+        WHERE id = :id AND cookie = :cookie
         LIMIT 1
     ");
     $stmt->execute([
         ':id' => $berichtId,
+        ':cookie' => $cookie,
     ]);
     $bericht = $stmt->fetch();
 

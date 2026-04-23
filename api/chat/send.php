@@ -13,7 +13,11 @@ function stuurJsonResponse($httpStatus, $data)
 
 function triggerWorkerOpAchtergrond($berichtId)
 {
-    $host = $_SERVER['HTTP_HOST'] ?? 'www.marioswitch1.nl';
+    $host = $_SERVER['SERVER_NAME'] ?? 'www.marioswitch1.nl';
+    $host = preg_replace('/[^a-zA-Z0-9.\-]/', '', (string) $host);
+    if (!is_string($host) || $host === '') {
+        $host = 'www.marioswitch1.nl';
+    }
     $isHttps = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off');
     $poort = $isHttps ? 443 : 80;
     $socketHost = ($isHttps ? 'ssl://' : '') . $host;

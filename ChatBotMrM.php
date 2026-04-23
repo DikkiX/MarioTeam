@@ -496,6 +496,7 @@
             // "Is het antwoord al klaar?"
             function startPolling(berichtId, typingIndicator) {
                 const chatMessages = document.getElementById('chatMessages');
+                const sessionCookie = ensureChatSessionCookie();
                 let pollingTimer = null;
                 let aantalPogingen = 0;
 
@@ -512,7 +513,7 @@
 
                     try {
                         // We vragen de nieuwste status van dit bericht op.
-                        const response = await fetch(`/api/chat/status?bericht_id=${encodeURIComponent(berichtId)}`, {
+                        const response = await fetch(`/api/chat/status?bericht_id=${encodeURIComponent(berichtId)}&cookie=${encodeURIComponent(sessionCookie)}`, {
                             method: 'GET',
                             credentials: 'same-origin'
                         });
