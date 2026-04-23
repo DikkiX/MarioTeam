@@ -33,6 +33,21 @@ function haalDashboardToneOfVoice($conn)
     }
 }
 
+function haalWorkerSecretUitRequest()
+{
+    $headerSecret = $_SERVER['HTTP_X_WORKER_SECRET'] ?? '';
+    if (is_string($headerSecret) && trim($headerSecret) !== '') {
+        return trim((string) $headerSecret);
+    }
+
+    $postSecret = $_POST['worker_secret'] ?? '';
+    if (is_string($postSecret) && trim($postSecret) !== '') {
+        return trim((string) $postSecret);
+    }
+
+    return '';
+}
+
 // Hiermee werken we het queue-bericht bij in de database.
 // Zo kunnen we status en antwoord veilig opslaan.
 function updateChatQueueBericht($conn, $berichtId, $status, $aiResponse = null)
@@ -385,11 +400,26 @@ function maakBerichtenVoorOpenAi($conn, $bericht)
     ]);
 }
 
-// De worker mag via POST door de trigger starten.
-// GET mag ook, zodat je hem makkelijk handmatig kunt testen.
-if (!in_array($_SERVER['REQUEST_METHOD'], ['POST', 'GET'], true)) {
-    http_response_code(405);
-    exit('Alleen GET en POST zijn toegestaan.');
+// De worker draait via een interne trigger.
+// Als CHAT_WORKER_SECRET gezet is, blokkeren we alle requests zonder secret.
+$requiredSecret = getProjectEnvValue('CHAT_WORKER_SECRET');
+$requiredSecret = is_string($requiredSecret) ? trim($requiredSecret) : '';
+if ($requiredSecret !== '') {
+    if ((string) ($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') {
+        http_response_code(405);
+        exit('Alleen POST is toegestaan.');
+    }
+
+    $given = haalWorkerSecretUitRequest();
+    if ($given === '' || !hash_equals($requiredSecret, $given)) {
+        http_response_code(403);
+        exit('Niet toegestaan.');
+    }
+} else {
+    if (!in_array($_SERVER['REQUEST_METHOD'], ['POST', 'GET'], true)) {
+        http_response_code(405);
+        exit('Alleen GET en POST zijn toegestaan.');
+    }
 }
 
 $actiefBerichtId = 0;

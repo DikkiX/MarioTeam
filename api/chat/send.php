@@ -21,7 +21,12 @@ function triggerWorkerOpAchtergrond($berichtId)
     $isHttps = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off');
     $poort = $isHttps ? 443 : 80;
     $socketHost = ($isHttps ? 'ssl://' : '') . $host;
-    $body = http_build_query(['message_id' => $berichtId]);
+    $secret = getProjectEnvValue('CHAT_WORKER_SECRET');
+    $secret = is_string($secret) ? trim($secret) : '';
+    $body = http_build_query([
+        'message_id' => $berichtId,
+        'worker_secret' => $secret,
+    ]);
 
     // We openen alleen kort een verbinding, sturen het signaal en wachten niet op antwoord.
     $socket = @fsockopen($socketHost, $poort, $errorCode, $errorMessage, 1);
@@ -34,6 +39,9 @@ function triggerWorkerOpAchtergrond($berichtId)
     $request .= "Host: " . $host . "\r\n";
     $request .= "Content-Type: application/x-www-form-urlencoded\r\n";
     $request .= "Content-Length: " . strlen($body) . "\r\n";
+    if ($secret !== '') {
+        $request .= "X-Worker-Secret: " . $secret . "\r\n";
+    }
     $request .= "Connection: Close\r\n\r\n";
     $request .= $body;
 
