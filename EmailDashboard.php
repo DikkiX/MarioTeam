@@ -45,18 +45,19 @@ function renderLoginPagina($melding = '')
         $msgHtml = '<div style="background:#fee2e2; border:1px solid #ef4444; padding:10px 12px; border-radius:10px; margin-bottom:12px;">' . e($melding) . '</div>';
     }
 
-    $html = '<!doctype html><html lang="nl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Email dashboard</title></head><body style="font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; background:#0b1220; color:#e5e7eb; margin:0; padding:20px;">';
-    $html .= '<div style="max-width: 520px; margin:0 auto; background:#0f172a; border:1px solid #1f2937; border-radius:14px; padding:16px;">';
-    $html .= '<h1 style="margin:0 0 12px; font-size:20px;">Inloggen</h1>';
+    $html = '<!doctype html><html lang="nl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Email dashboard</title></head><body style="font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; background:#e5e7eb; color:#111827; margin:0; padding:22px;">';
+    $html .= '<div style="max-width: 520px; margin:0 auto; background:#f3f4f6; border:1px solid #9ca3af; border-radius:14px; padding:16px;">';
+    $html .= '<div style="font-weight:800; font-size:18px; margin-bottom:12px;">Mario Team - AI E-mail Concepten Module</div>';
+    $html .= '<h1 style="margin:0 0 12px; font-size:18px;">Inloggen</h1>';
     $html .= $msgHtml;
     $html .= '<form method="post" action="">';
     $html .= '<input type="hidden" name="csrf" value="' . e($csrf) . '">';
     $html .= '<input type="hidden" name="actie" value="login">';
-    $html .= '<label style="display:block; color:#cbd5e1; margin-bottom:6px;">Gebruikersnaam</label>';
-    $html .= '<input name="user" autocomplete="username" style="width:100%; box-sizing:border-box; border-radius:10px; border:1px solid #334155; background:#0b1220; color:#e5e7eb; padding:10px 12px; margin-bottom:10px;">';
-    $html .= '<label style="display:block; color:#cbd5e1; margin-bottom:6px;">Wachtwoord</label>';
-    $html .= '<input type="password" name="pass" autocomplete="current-password" style="width:100%; box-sizing:border-box; border-radius:10px; border:1px solid #334155; background:#0b1220; color:#e5e7eb; padding:10px 12px; margin-bottom:12px;">';
-    $html .= '<button type="submit" style="background:#93c5fd; border:none; color:#0b1220; font-weight:700; padding:10px 14px; border-radius:10px; cursor:pointer; width:100%;">Inloggen</button>';
+    $html .= '<label style="display:block; color:#111827; margin-bottom:6px; font-weight:700;">Gebruikersnaam</label>';
+    $html .= '<input name="user" autocomplete="username" style="width:100%; box-sizing:border-box; border-radius:10px; border:1px solid #9ca3af; background:#ffffff; color:#111827; padding:10px 12px; margin-bottom:10px;">';
+    $html .= '<label style="display:block; color:#111827; margin-bottom:6px; font-weight:700;">Wachtwoord</label>';
+    $html .= '<input type="password" name="pass" autocomplete="current-password" style="width:100%; box-sizing:border-box; border-radius:10px; border:1px solid #9ca3af; background:#ffffff; color:#111827; padding:10px 12px; margin-bottom:12px;">';
+    $html .= '<button type="submit" style="background:#60a5fa; border:1px solid #3b82f6; color:#111827; font-weight:800; padding:10px 14px; border-radius:10px; cursor:pointer; width:100%;">Inloggen</button>';
     $html .= '</form>';
     $html .= '</div></body></html>';
     stuurHtml(200, $html);
@@ -652,7 +653,7 @@ function roepOpenAiAanVoorEmailConcept($onderwerp, $klantTekst)
         if (isset($conn) && $conn) {
             $tone = haalDashboardSetting($conn, 'tone_of_voice');
         }
-    } catch (Throwable $e) {
+    } catch (Throwable) {
         $tone = '';
     }
     if (is_string($tone) && trim($tone) !== '') {
@@ -801,7 +802,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 'type' => 'ok',
                 'melding' => 'Instellingen zijn opgeslagen.',
             ];
-        } catch (Throwable $e) {
+        } catch (Throwable) {
             $_SESSION['email_dashboard_flash'] = [
                 'type' => 'error',
                 'melding' => 'Opslaan is mislukt.',
@@ -927,9 +928,9 @@ function renderLayout($titel, $contentHtml, $melding, $meldingType)
         $msgHtml = '<div style="background:' . $bg . '; border:1px solid ' . $bd . '; padding:10px 12px; border-radius:10px; margin:12px 0;">' . e($melding) . '</div>';
     }
 
-    $html = '<!doctype html><html lang="nl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>' . e($titel) . '</title></head><body style="font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; background:#e5e7eb; color:#111827; margin:0; padding:22px;">';
+    $html = '<!doctype html><html lang="nl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>' . e($titel) . '</title><style>:root{--grid-main-cols:360px 1fr;--grid-settings-cols:260px 1fr;--list-max-h:calc(100vh - 220px);}@media (max-width: 900px){:root{--grid-main-cols:1fr;--grid-settings-cols:1fr;--list-max-h:260px;}body{padding:14px!important;}}</style></head><body style="font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; background:#e5e7eb; color:#111827; margin:0; padding:22px;">';
     $html .= '<div style="max-width: 1200px; margin:0 auto;">';
-    $html .= '<div style="display:flex; align-items:center; justify-content:space-between; gap:16px; margin-bottom:14px; padding:10px 12px; background:#f3f4f6; border:1px solid #9ca3af; border-radius:12px;">';
+    $html .= '<div style="display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:12px; margin-bottom:14px; padding:10px 12px; background:#f3f4f6; border:1px solid #9ca3af; border-radius:12px;">';
     $html .= '<div style="font-weight:800; font-size:18px;">Mario Team - AI E-mail Concepten Module</div>';
     $html .= '<div style="display:flex; gap:14px; align-items:center;">';
     $html .= '<a href="/EmailDashboard.php" style="color:#111827; text-decoration:none;">Overzicht</a>';
@@ -949,7 +950,7 @@ if ($settings) {
     $toneValue = '';
     try {
         $toneValue = haalDashboardSetting($conn, 'tone_of_voice');
-    } catch (Throwable $e) {
+    } catch (Throwable) {
         $toneValue = '';
     }
 
@@ -976,7 +977,7 @@ if ($settings) {
     }
     $content .= '</div>';
 
-    $layout = '<div style="display:grid; grid-template-columns: 260px 1fr; gap:16px; align-items:start;">' . $menu . $content . '</div>';
+    $layout = '<div style="display:grid; grid-template-columns: var(--grid-settings-cols); gap:16px; align-items:start;">' . $menu . $content . '</div>';
     stuurHtml(200, renderLayout('Email dashboard', $layout, $melding, $meldingType));
 }
 
@@ -1098,7 +1099,7 @@ if (empty($rows)) {
     $onderwerpCache = [];
     $tokenVoorOnderwerp = haalGmailAccessTokenOp();
     $accessTokenVoorOnderwerp = !empty($tokenVoorOnderwerp['ok']) ? (string) $tokenVoorOnderwerp['access_token'] : '';
-    $lijstHtml .= '<div style="padding:10px; max-height: calc(100vh - 220px); overflow:auto;">';
+    $lijstHtml .= '<div style="padding:10px; max-height: var(--list-max-h); overflow:auto;">';
     foreach ($rows as $r) {
         $isActief = ($id > 0 && (int) $r['id'] === (int) $id);
         $bg = $isActief ? '#bfdbfe' : '#e5e7eb';
@@ -1233,5 +1234,5 @@ if (!$concept) {
     $detailHtml .= '</div>';
 }
 
-$grid = '<div style="display:grid; grid-template-columns: 360px 1fr; gap:16px; align-items:start;">' . $lijstHtml . $detailHtml . '</div>';
+$grid = '<div style="display:grid; grid-template-columns: var(--grid-main-cols); gap:16px; align-items:start;">' . $lijstHtml . $detailHtml . '</div>';
 stuurHtml(200, renderLayout('Email dashboard', $grid, $melding, $meldingType));
