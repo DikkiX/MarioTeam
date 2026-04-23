@@ -611,7 +611,7 @@ function bestaatEmailConceptVoorThread($conn, $threadId)
         SELECT id
         FROM email_concepten
         WHERE gmail_thread_id = :thread_id
-          AND status IN ('draft', 'sent')
+          AND status = 'draft'
         LIMIT 1
     ");
     $stmt->execute([
@@ -952,6 +952,9 @@ if ($magSync) {
                     }
 
                     voegEmailConceptToe($conn, $threadId, $klantEmail, $conceptTekst);
+                    gmailApiRequest('POST', 'users/me/messages/' . rawurlencode($msgId) . '/modify', $accessToken, [
+                        'removeLabelIds' => ['UNREAD'],
+                    ]);
                     $heeftNetGesynct = true;
                 }
             }
