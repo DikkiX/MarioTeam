@@ -843,6 +843,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 
 $id = isset($_GET['id']) ? (int) $_GET['id'] : 0;
+$settings = isset($_GET['settings']) && (string) $_GET['settings'] === '1';
 $csrf = csrfToken();
 
 function renderLayout($titel, $contentHtml, $melding, $meldingType)
@@ -856,14 +857,27 @@ function renderLayout($titel, $contentHtml, $melding, $meldingType)
 
     $html = '<!doctype html><html lang="nl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>' . e($titel) . '</title></head><body style="font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; background:#e5e7eb; color:#111827; margin:0; padding:22px;">';
     $html .= '<div style="max-width: 1200px; margin:0 auto;">';
-    $html .= '<div style="display:flex; align-items:center; justify-content:space-between; gap:16px; margin-bottom:14px;">';
+    $html .= '<div style="display:flex; align-items:center; justify-content:space-between; gap:16px; margin-bottom:14px; padding:10px 12px; background:#f3f4f6; border:1px solid #9ca3af; border-radius:12px;">';
     $html .= '<div style="font-weight:800; font-size:18px;">Mario Team - AI E-mail Concepten Module</div>';
-    $html .= '<div style="display:flex; gap:12px;"><a href="/EmailDashboard.php" style="color:#111827; text-decoration:none;">Overzicht</a><a href="/EmailDashboard.php?logout=1" style="color:#111827; text-decoration:none;">Uitloggen</a></div>';
-    $html .= '</div>';
+    $html .= '<div style="display:flex; gap:14px; align-items:center;">';
+    $html .= '<a href="/EmailDashboard.php" style="color:#111827; text-decoration:none;">Overzicht</a>';
+    $html .= '<a href="/EmailDashboard.php?settings=1" style="color:#111827; text-decoration:none;">Instellingen</a>';
+    $html .= '<a href="/EmailDashboard.php?logout=1" style="color:#111827; text-decoration:none;">Uitloggen</a>';
+    $html .= '</div></div>';
     $html .= $msgHtml;
     $html .= $contentHtml;
     $html .= '</div></body></html>';
     return $html;
+}
+
+$instellingenHtml = '';
+if ($settings) {
+    // Instellingenpagina (later uitbreiden).
+    $instellingenHtml .= '<div style="background:#f3f4f6; border:1px solid #9ca3af; border-radius:14px; padding:14px 16px;">';
+    $instellingenHtml .= '<div style="font-weight:800; margin-bottom:8px;">Instellingen</div>';
+    $instellingenHtml .= '<div style="color:#6b7280;">Hier komen later dashboard-instellingen (bijv. toon/instellingen per webshop).</div>';
+    $instellingenHtml .= '</div>';
+    stuurHtml(200, renderLayout('Email dashboard', $instellingenHtml, $melding, $meldingType));
 }
 
 $heeftNetGesynct = false;
@@ -981,7 +995,7 @@ if (empty($rows)) {
     $onderwerpCache = [];
     $tokenVoorOnderwerp = haalGmailAccessTokenOp();
     $accessTokenVoorOnderwerp = !empty($tokenVoorOnderwerp['ok']) ? (string) $tokenVoorOnderwerp['access_token'] : '';
-    $lijstHtml .= '<div style="padding:10px;">';
+    $lijstHtml .= '<div style="padding:10px; max-height: calc(100vh - 220px); overflow:auto;">';
     foreach ($rows as $r) {
         $isActief = ($id > 0 && (int) $r['id'] === (int) $id);
         $bg = $isActief ? '#bfdbfe' : '#e5e7eb';
