@@ -17,6 +17,22 @@ function schrijfWorkerLog($message)
     file_put_contents($logBestand, $regel, FILE_APPEND);
 }
 
+function haalDashboardToneOfVoice($conn)
+{
+    // Tone of voice komt uit de dashboard instellingen.
+    try {
+        $stmt = $conn->prepare("SELECT setting_value FROM dashboard_settings WHERE setting_key = 'tone_of_voice' LIMIT 1");
+        $stmt->execute();
+        $row = $stmt->fetch();
+        if (!$row || !isset($row['setting_value'])) {
+            return '';
+        }
+        return trim((string) $row['setting_value']);
+    } catch (Throwable $e) {
+        return '';
+    }
+}
+
 // Hiermee werken we het queue-bericht bij in de database.
 // Zo kunnen we status en antwoord veilig opslaan.
 function updateChatQueueBericht($conn, $berichtId, $status, $aiResponse = null)
@@ -105,11 +121,23 @@ function bepaalGeforceerdeToolChoice($berichtTekst)
 // Als we tools meegeven, mag het model ook een functie aanroepen.
 function roepOpenAiAan($messages, $tools = [], $toolChoice = 'auto')
 {
+    global $conn;
     $apiKey = getProjectEnvValue('OPENAI_API_KEY');
 
     if ($apiKey === null || $apiKey === '') {
         schrijfWorkerLog('OpenAI key ontbreekt.');
         return null;
+    }
+
+    $tone = '';
+    if (isset($conn) && $conn) {
+        $tone = haalDashboardToneOfVoice($conn);
+    }
+    if (is_string($tone) && $tone !== '') {
+        array_unshift($messages, [
+            'role' => 'system',
+            'content' => "Tone of voice instructies:\n" . $tone,
+        ]);
     }
 
     $data = [

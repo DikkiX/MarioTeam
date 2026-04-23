@@ -646,6 +646,18 @@ function roepOpenAiAanVoorEmailConcept($onderwerp, $klantTekst)
     }
 
     $system = 'Je schrijft een concept-antwoord voor de klantenservice van de webshops van MarioTeam. Schrijf in het Nederlands. Als informatie ontbreekt, stel eerst korte, duidelijke vragen. Geef geen exacte voorraadaantallen. Als de klant om ordergegevens vraagt, vraag eerst om bestelnummer + e-mailadres. Geef alleen het antwoord (geen uitleg over je stappen).';
+    $tone = '';
+    try {
+        global $conn;
+        if (isset($conn) && $conn) {
+            $tone = haalDashboardSetting($conn, 'tone_of_voice');
+        }
+    } catch (Throwable $e) {
+        $tone = '';
+    }
+    if (is_string($tone) && trim($tone) !== '') {
+        $system .= "\n\nTone of voice instructies:\n" . trim($tone);
+    }
     $user = "Onderwerp: " . (string) $onderwerp . "\n\nKlantmail:\n" . (string) $klantTekst;
 
     $data = [
@@ -717,6 +729,47 @@ function bouwRfc2822Bericht($toEmail, $subject, $bodyText, $inReplyTo = null, $r
     return $b64;
 }
 
+function zorgDashboardSettingsTabel($conn)
+{
+    // Deze tabel bewaart dashboard instellingen zoals tone of voice.
+    $conn->exec("
+        CREATE TABLE IF NOT EXISTS `dashboard_settings` (
+            `setting_key` VARCHAR(64) NOT NULL,
+            `setting_value` LONGTEXT NOT NULL,
+            `updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            PRIMARY KEY (`setting_key`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    ");
+}
+
+function haalDashboardSetting($conn, $key)
+{
+    // Dit haalt 1 instelling op uit de database.
+    zorgDashboardSettingsTabel($conn);
+    $stmt = $conn->prepare("SELECT setting_value FROM dashboard_settings WHERE setting_key = :k LIMIT 1");
+    $stmt->execute([':k' => (string) $key]);
+    $row = $stmt->fetch();
+    if (!$row || !isset($row['setting_value'])) {
+        return '';
+    }
+    return (string) $row['setting_value'];
+}
+
+function slaDashboardSettingOp($conn, $key, $value)
+{
+    // Dit slaat 1 instelling op (upsert).
+    zorgDashboardSettingsTabel($conn);
+    $stmt = $conn->prepare("
+        INSERT INTO dashboard_settings (setting_key, setting_value)
+        VALUES (:k, :v)
+        ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value)
+    ");
+    $stmt->execute([
+        ':k' => (string) $key,
+        ':v' => (string) $value,
+    ]);
+}
+
 vereisDashboardLogin();
 
 $melding = null;
@@ -739,6 +792,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     vereisCsrf();
 
     $actie = isset($_POST['actie']) ? (string) $_POST['actie'] : '';
+    if ($actie === 'save_tone') {
+        // Dit slaat de tone of voice tekst op in de database.
+        $tone = isset($_POST['tone_of_voice']) ? trim((string) $_POST['tone_of_voice']) : '';
+        try {
+            slaDashboardSettingOp($conn, 'tone_of_voice', $tone);
+            $_SESSION['email_dashboard_flash'] = [
+                'type' => 'ok',
+                'melding' => 'Instellingen zijn opgeslagen.',
+            ];
+        } catch (Throwable $e) {
+            $_SESSION['email_dashboard_flash'] = [
+                'type' => 'error',
+                'melding' => 'Opslaan is mislukt.',
+            ];
+        }
+        header('Location: /EmailDashboard.php?settings=1&tab=tone', true, 303);
+        exit;
+    }
     if ($actie === 'delete') {
         // Verwijderen betekent: uit de draft-lijst halen.
         $conceptId = isset($_POST['id']) ? (int) $_POST['id'] : 0;
@@ -844,6 +915,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 $id = isset($_GET['id']) ? (int) $_GET['id'] : 0;
 $settings = isset($_GET['settings']) && (string) $_GET['settings'] === '1';
+$settingsTab = isset($_GET['tab']) ? (string) $_GET['tab'] : 'tone';
 $csrf = csrfToken();
 
 function renderLayout($titel, $contentHtml, $melding, $meldingType)
@@ -872,12 +944,40 @@ function renderLayout($titel, $contentHtml, $melding, $meldingType)
 
 $instellingenHtml = '';
 if ($settings) {
-    // Instellingenpagina (later uitbreiden).
-    $instellingenHtml .= '<div style="background:#f3f4f6; border:1px solid #9ca3af; border-radius:14px; padding:14px 16px;">';
-    $instellingenHtml .= '<div style="font-weight:800; margin-bottom:8px;">Instellingen</div>';
-    $instellingenHtml .= '<div style="color:#6b7280;">Hier komen later dashboard-instellingen (bijv. toon/instellingen per webshop).</div>';
-    $instellingenHtml .= '</div>';
-    stuurHtml(200, renderLayout('Email dashboard', $instellingenHtml, $melding, $meldingType));
+    // Instellingenpagina met een zijmenu (hier komen later meerdere items).
+    $activeTone = ($settingsTab === 'tone');
+    $toneValue = '';
+    try {
+        $toneValue = haalDashboardSetting($conn, 'tone_of_voice');
+    } catch (Throwable $e) {
+        $toneValue = '';
+    }
+
+    $menu = '<div style="background:#f3f4f6; border:1px solid #9ca3af; border-radius:14px; overflow:hidden;">';
+    $menu .= '<div style="padding:12px 14px; border-bottom:1px solid #9ca3af; font-weight:800;">Instellingen</div>';
+    $menu .= '<div style="padding:10px;">';
+    $menu .= '<a href="/EmailDashboard.php?settings=1&amp;tab=tone" style="display:block; padding:10px 12px; border-radius:10px; text-decoration:none; border:1px solid ' . ($activeTone ? '#60a5fa' : '#9ca3af') . '; background:' . ($activeTone ? '#bfdbfe' : '#e5e7eb') . '; color:#111827; font-weight:800;">Tone of voice</a>';
+    $menu .= '</div></div>';
+
+    $content = '<div style="background:#f3f4f6; border:1px solid #9ca3af; border-radius:14px; padding:14px 16px;">';
+    if ($activeTone) {
+        $content .= '<div style="font-weight:800; margin-bottom:8px;">Tone of voice</div>';
+        $content .= '<div style="color:#6b7280; margin-bottom:10px;">Deze tekst wordt toegevoegd aan de systeem-instructies van de AI.</div>';
+        $content .= '<form method="post" action="/EmailDashboard.php?settings=1&amp;tab=tone">';
+        $content .= '<input type="hidden" name="csrf" value="' . e($csrf) . '">';
+        $content .= '<input type="hidden" name="actie" value="save_tone">';
+        $content .= '<textarea name="tone_of_voice" rows="10" style="width:100%; box-sizing:border-box; border-radius:10px; border:1px solid #9ca3af; background:#ffffff; color:#111827; padding:10px 12px; resize:vertical;">' . e($toneValue) . '</textarea>';
+        $content .= '<div style="display:flex; justify-content:flex-end; margin-top:10px;">';
+        $content .= '<button type="submit" style="background:#60a5fa; border:1px solid #3b82f6; color:#111827; font-weight:800; padding:10px 14px; border-radius:10px; cursor:pointer;">Opslaan</button>';
+        $content .= '</div></form>';
+    } else {
+        $content .= '<div style="font-weight:800; margin-bottom:8px;">Instellingen</div>';
+        $content .= '<div style="color:#6b7280;">Kies links een onderdeel.</div>';
+    }
+    $content .= '</div>';
+
+    $layout = '<div style="display:grid; grid-template-columns: 260px 1fr; gap:16px; align-items:start;">' . $menu . $content . '</div>';
+    stuurHtml(200, renderLayout('Email dashboard', $layout, $melding, $meldingType));
 }
 
 $heeftNetGesynct = false;
