@@ -639,7 +639,7 @@ function voegEmailConceptToe($conn, $threadId, $klantEmail, $conceptTekst)
     return (int) $conn->lastInsertId();
 }
 
-function roepOpenAiAanVoorEmailConcept($onderwerp, $klantTekst)
+function roepOpenAiAanVoorEmailConcept($onderwerp, $klantTekst, $extraInstructies = '')
 {
     // Dit maakt een concept-antwoord op basis van de klantmail.
     $apiKey = getProjectEnvValue('OPENAI_API_KEY');
@@ -659,6 +659,9 @@ function roepOpenAiAanVoorEmailConcept($onderwerp, $klantTekst)
     }
     if (is_string($tone) && trim($tone) !== '') {
         $system .= "\n\nTone of voice instructies:\n" . trim($tone);
+    }
+    if (is_string($extraInstructies) && trim($extraInstructies) !== '') {
+        $system .= "\n\nExtra regels/instructies:\n" . trim($extraInstructies);
     }
     $user = "Onderwerp: " . (string) $onderwerp . "\n\nKlantmail:\n" . (string) $klantTekst;
 
@@ -772,6 +775,105 @@ function slaDashboardSettingOp($conn, $key, $value)
     ]);
 }
 
+function zorgEmailRulesTabel($conn)
+{
+    // Deze tabel bewaart regels & filters voor e-mails.
+    $conn->exec("
+        CREATE TABLE IF NOT EXISTS `email_rules` (
+            `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
+            `is_enabled` TINYINT(1) NOT NULL DEFAULT 1,
+            `condition_type` VARCHAR(32) NOT NULL,
+            `condition_value` VARCHAR(255) NOT NULL,
+            `action_type` VARCHAR(32) NOT NULL,
+            `action_value` LONGTEXT NULL,
+            `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            `updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            PRIMARY KEY (`id`),
+            INDEX (`is_enabled`),
+            INDEX (`condition_type`),
+            INDEX (`action_type`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    ");
+}
+
+function haalEmailRules($conn)
+{
+    // Dit haalt alle regels op voor de instellingenpagina.
+    zorgEmailRulesTabel($conn);
+    $stmt = $conn->prepare("
+        SELECT id, is_enabled, condition_type, condition_value, action_type, action_value, created_at, updated_at
+        FROM email_rules
+        ORDER BY id DESC
+    ");
+    $stmt->execute();
+    $rows = $stmt->fetchAll();
+    return is_array($rows) ? $rows : [];
+}
+
+function haalActieveEmailRules($conn)
+{
+    // Dit haalt alleen actieve regels op voor het filteren.
+    zorgEmailRulesTabel($conn);
+    $stmt = $conn->prepare("
+        SELECT id, condition_type, condition_value, action_type, action_value
+        FROM email_rules
+        WHERE is_enabled = 1
+        ORDER BY id ASC
+    ");
+    $stmt->execute();
+    $rows = $stmt->fetchAll();
+    return is_array($rows) ? $rows : [];
+}
+
+function verwerkEmailRulesVoorMail($rules, $fromHeader, $subject)
+{
+    // Dit controleert of de mail voldoet aan regels, en geeft acties terug.
+    $fromHeader = strtolower((string) $fromHeader);
+    $subject = strtolower((string) $subject);
+
+    $ignore = false;
+    $extra = [];
+
+    foreach ($rules as $r) {
+        if (!is_array($r)) {
+            continue;
+        }
+        $condType = isset($r['condition_type']) ? (string) $r['condition_type'] : '';
+        $condValue = isset($r['condition_value']) ? trim((string) $r['condition_value']) : '';
+        $actionType = isset($r['action_type']) ? (string) $r['action_type'] : '';
+        $actionValue = isset($r['action_value']) ? trim((string) $r['action_value']) : '';
+
+        if ($condValue === '' || $condType === '' || $actionType === '') {
+            continue;
+        }
+
+        $needle = strtolower($condValue);
+        $match = false;
+        if ($condType === 'from_contains') {
+            $match = (strpos($fromHeader, $needle) !== false);
+        } elseif ($condType === 'subject_contains') {
+            $match = (strpos($subject, $needle) !== false);
+        }
+
+        if (!$match) {
+            continue;
+        }
+
+        if ($actionType === 'ignore') {
+            $ignore = true;
+            break;
+        }
+        if ($actionType === 'add_prompt' && $actionValue !== '') {
+            $extra[] = $actionValue;
+        }
+    }
+
+    return [
+        'ignore' => $ignore,
+        'extra_instructies' => implode("\n\n", $extra),
+    ];
+}
+
 vereisDashboardLogin();
 
 $melding = null;
@@ -810,6 +912,123 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             ];
         }
         header('Location: /EmailDashboard.php?settings=1&tab=tone', true, 303);
+        exit;
+    }
+    if ($actie === 'save_rule') {
+        // Dit maakt of wijzigt een regel.
+        $ruleId = isset($_POST['rule_id']) ? (int) $_POST['rule_id'] : 0;
+        $isEnabled = isset($_POST['is_enabled']) ? 1 : 0;
+        $conditionType = isset($_POST['condition_type']) ? (string) $_POST['condition_type'] : '';
+        $conditionValue = isset($_POST['condition_value']) ? trim((string) $_POST['condition_value']) : '';
+        $actionType = isset($_POST['action_type']) ? (string) $_POST['action_type'] : '';
+        $actionValue = isset($_POST['action_value']) ? trim((string) $_POST['action_value']) : '';
+
+        $allowedCondition = ['from_contains', 'subject_contains'];
+        $allowedAction = ['ignore', 'add_prompt'];
+
+        if (!in_array($conditionType, $allowedCondition, true) || !in_array($actionType, $allowedAction, true) || $conditionValue === '') {
+            $_SESSION['email_dashboard_flash'] = [
+                'type' => 'error',
+                'melding' => 'Voorwaarde en actie zijn verplicht.',
+            ];
+            header('Location: /EmailDashboard.php?settings=1&tab=rules', true, 303);
+            exit;
+        }
+
+        if ($actionType === 'ignore') {
+            $actionValue = '';
+        }
+        if ($actionType === 'add_prompt' && $actionValue === '') {
+            $_SESSION['email_dashboard_flash'] = [
+                'type' => 'error',
+                'melding' => 'Vul een instructie in voor de AI.',
+            ];
+            header('Location: /EmailDashboard.php?settings=1&tab=rules', true, 303);
+            exit;
+        }
+
+        try {
+            zorgEmailRulesTabel($conn);
+            if ($ruleId > 0) {
+                $stmt = $conn->prepare("
+                    UPDATE email_rules
+                    SET is_enabled = :en,
+                        condition_type = :ct,
+                        condition_value = :cv,
+                        action_type = :at,
+                        action_value = :av
+                    WHERE id = :id
+                ");
+                $stmt->execute([
+                    ':en' => $isEnabled,
+                    ':ct' => $conditionType,
+                    ':cv' => $conditionValue,
+                    ':at' => $actionType,
+                    ':av' => ($actionValue === '' ? null : $actionValue),
+                    ':id' => $ruleId,
+                ]);
+            } else {
+                $stmt = $conn->prepare("
+                    INSERT INTO email_rules (is_enabled, condition_type, condition_value, action_type, action_value)
+                    VALUES (:en, :ct, :cv, :at, :av)
+                ");
+                $stmt->execute([
+                    ':en' => $isEnabled,
+                    ':ct' => $conditionType,
+                    ':cv' => $conditionValue,
+                    ':at' => $actionType,
+                    ':av' => ($actionValue === '' ? null : $actionValue),
+                ]);
+            }
+            $_SESSION['email_dashboard_flash'] = [
+                'type' => 'ok',
+                'melding' => 'Regel is opgeslagen.',
+            ];
+        } catch (Throwable) {
+            $_SESSION['email_dashboard_flash'] = [
+                'type' => 'error',
+                'melding' => 'Opslaan is mislukt.',
+            ];
+        }
+
+        header('Location: /EmailDashboard.php?settings=1&tab=rules', true, 303);
+        exit;
+    }
+    if ($actie === 'toggle_rule') {
+        // Dit zet een regel aan/uit.
+        $ruleId = isset($_POST['rule_id']) ? (int) $_POST['rule_id'] : 0;
+        $isEnabled = isset($_POST['is_enabled']) ? 1 : 0;
+        if ($ruleId > 0) {
+            try {
+                zorgEmailRulesTabel($conn);
+                $stmt = $conn->prepare("UPDATE email_rules SET is_enabled = :en WHERE id = :id");
+                $stmt->execute([':en' => $isEnabled, ':id' => $ruleId]);
+            } catch (Throwable) {
+            }
+        }
+        header('Location: /EmailDashboard.php?settings=1&tab=rules', true, 303);
+        exit;
+    }
+    if ($actie === 'delete_rule') {
+        // Dit verwijdert een regel.
+        $ruleId = isset($_POST['rule_id']) ? (int) $_POST['rule_id'] : 0;
+        if ($ruleId > 0) {
+            try {
+                zorgEmailRulesTabel($conn);
+                $stmt = $conn->prepare("DELETE FROM email_rules WHERE id = :id");
+                $stmt->execute([':id' => $ruleId]);
+                $_SESSION['email_dashboard_flash'] = [
+                    'type' => 'ok',
+                    'melding' => 'Regel is verwijderd.',
+                ];
+            } catch (Throwable) {
+                $_SESSION['email_dashboard_flash'] = [
+                    'type' => 'error',
+                    'melding' => 'Verwijderen is mislukt.',
+                ];
+            }
+        }
+        header('Location: /EmailDashboard.php?settings=1&tab=rules', true, 303);
         exit;
     }
     if ($actie === 'delete') {
@@ -948,6 +1167,7 @@ $instellingenHtml = '';
 if ($settings) {
     // Instellingenpagina met een zijmenu (hier komen later meerdere items).
     $activeTone = ($settingsTab === 'tone');
+    $activeRules = ($settingsTab === 'rules');
     $toneValue = '';
     try {
         $toneValue = haalDashboardSetting($conn, 'tone_of_voice');
@@ -959,6 +1179,8 @@ if ($settings) {
     $menu .= '<div style="padding:12px 14px; border-bottom:1px solid #9ca3af; font-weight:800;">Instellingen</div>';
     $menu .= '<div style="padding:10px;">';
     $menu .= '<a href="/EmailDashboard.php?settings=1&amp;tab=tone" style="display:block; padding:10px 12px; border-radius:10px; text-decoration:none; border:1px solid ' . ($activeTone ? '#60a5fa' : '#9ca3af') . '; background:' . ($activeTone ? '#bfdbfe' : '#e5e7eb') . '; color:#111827; font-weight:800;">Tone of voice</a>';
+    $menu .= '<div style="height:10px;"></div>';
+    $menu .= '<a href="/EmailDashboard.php?settings=1&amp;tab=rules" style="display:block; padding:10px 12px; border-radius:10px; text-decoration:none; border:1px solid ' . ($activeRules ? '#60a5fa' : '#9ca3af') . '; background:' . ($activeRules ? '#bfdbfe' : '#e5e7eb') . '; color:#111827; font-weight:800;">Regels &amp; filters</a>';
     $menu .= '</div></div>';
 
     $content = '<div style="background:#f3f4f6; border:1px solid #9ca3af; border-radius:14px; padding:14px 16px;">';
@@ -972,6 +1194,134 @@ if ($settings) {
         $content .= '<div style="display:flex; justify-content:flex-end; margin-top:10px;">';
         $content .= '<button type="submit" style="background:#60a5fa; border:1px solid #3b82f6; color:#111827; font-weight:800; padding:10px 14px; border-radius:10px; cursor:pointer;">Opslaan</button>';
         $content .= '</div></form>';
+    } elseif ($activeRules) {
+        $editId = isset($_GET['edit_rule']) ? (int) $_GET['edit_rule'] : 0;
+        $edit = null;
+        $regels = [];
+        try {
+            $regels = haalEmailRules($conn);
+            if ($editId > 0) {
+                foreach ($regels as $r) {
+                    if (isset($r['id']) && (int) $r['id'] === $editId) {
+                        $edit = $r;
+                        break;
+                    }
+                }
+            }
+        } catch (Throwable) {
+            $regels = [];
+            $edit = null;
+        }
+
+        $content .= '<div style="font-weight:800; margin-bottom:8px;">Regels &amp; filters</div>';
+        $content .= '<div style="color:#6b7280; margin-bottom:12px;">Regels worden toegepast voordat er een AI-concept gemaakt wordt.</div>';
+
+        $ruleIdValue = $edit ? (int) $edit['id'] : 0;
+        $isEnabledValue = $edit ? ((int) $edit['is_enabled'] === 1) : true;
+        $condTypeValue = $edit ? (string) $edit['condition_type'] : 'from_contains';
+        $condValueValue = $edit ? (string) $edit['condition_value'] : '';
+        $actionTypeValue = $edit ? (string) $edit['action_type'] : 'ignore';
+        $actionValueValue = $edit ? (string) ($edit['action_value'] ?? '') : '';
+
+        $content .= '<div style="background:#ffffff; border:1px solid #9ca3af; border-radius:12px; padding:12px 12px; margin-bottom:14px;">';
+        $content .= '<div style="font-weight:800; margin-bottom:10px;">' . ($edit ? 'Regel aanpassen' : 'Nieuwe regel') . '</div>';
+        $content .= '<form method="post" action="/EmailDashboard.php?settings=1&amp;tab=rules">';
+        $content .= '<input type="hidden" name="csrf" value="' . e($csrf) . '">';
+        $content .= '<input type="hidden" name="actie" value="save_rule">';
+        $content .= '<input type="hidden" name="rule_id" value="' . e((string) $ruleIdValue) . '">';
+
+        $content .= '<label style="display:flex; gap:10px; align-items:center; margin-bottom:10px;">';
+        $content .= '<input type="checkbox" name="is_enabled" value="1" ' . ($isEnabledValue ? 'checked' : '') . '>';
+        $content .= '<span>Regel is actief</span>';
+        $content .= '</label>';
+
+        $content .= '<div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px; margin-bottom:10px;">';
+        $content .= '<div>';
+        $content .= '<div style="font-weight:700; margin-bottom:6px;">Voorwaarde</div>';
+        $content .= '<select name="condition_type" style="width:100%; border-radius:10px; border:1px solid #9ca3af; background:#ffffff; color:#111827; padding:10px 12px;">';
+        $content .= '<option value="from_contains" ' . ($condTypeValue === 'from_contains' ? 'selected' : '') . '>Als afzender bevat...</option>';
+        $content .= '<option value="subject_contains" ' . ($condTypeValue === 'subject_contains' ? 'selected' : '') . '>Als onderwerp bevat...</option>';
+        $content .= '</select>';
+        $content .= '</div>';
+        $content .= '<div>';
+        $content .= '<div style="font-weight:700; margin-bottom:6px;">Tekst</div>';
+        $content .= '<input type="text" name="condition_value" value="' . e($condValueValue) . '" style="width:100%; box-sizing:border-box; border-radius:10px; border:1px solid #9ca3af; background:#ffffff; color:#111827; padding:10px 12px;">';
+        $content .= '</div>';
+        $content .= '</div>';
+
+        $content .= '<div style="display:grid; grid-template-columns: 1fr; gap:10px; margin-bottom:10px;">';
+        $content .= '<div>';
+        $content .= '<div style="font-weight:700; margin-bottom:6px;">Actie</div>';
+        $content .= '<select name="action_type" style="width:100%; border-radius:10px; border:1px solid #9ca3af; background:#ffffff; color:#111827; padding:10px 12px;">';
+        $content .= '<option value="ignore" ' . ($actionTypeValue === 'ignore' ? 'selected' : '') . '>Negeer deze e-mail</option>';
+        $content .= '<option value="add_prompt" ' . ($actionTypeValue === 'add_prompt' ? 'selected' : '') . '>Voeg instructie toe aan AI</option>';
+        $content .= '</select>';
+        $content .= '</div>';
+        $content .= '<div>';
+        $content .= '<div style="font-weight:700; margin-bottom:6px;">AI instructie (alleen bij “Voeg instructie toe”)</div>';
+        $content .= '<textarea name="action_value" rows="4" style="width:100%; box-sizing:border-box; border-radius:10px; border:1px solid #9ca3af; background:#ffffff; color:#111827; padding:10px 12px; resize:vertical;">' . e($actionValueValue) . '</textarea>';
+        $content .= '</div>';
+        $content .= '</div>';
+
+        $content .= '<div style="display:flex; gap:10px; justify-content:flex-end; margin-top:10px;">';
+        if ($edit) {
+            $content .= '<a href="/EmailDashboard.php?settings=1&amp;tab=rules" style="display:inline-block; padding:10px 14px; border-radius:10px; border:1px solid #9ca3af; background:#e5e7eb; color:#111827; text-decoration:none; font-weight:800;">Annuleren</a>';
+        }
+        $content .= '<button type="submit" style="background:#60a5fa; border:1px solid #3b82f6; color:#111827; font-weight:800; padding:10px 14px; border-radius:10px; cursor:pointer;">Opslaan</button>';
+        $content .= '</div></form>';
+        $content .= '</div>';
+
+        $content .= '<div style="font-weight:800; margin-bottom:10px;">Bestaande regels</div>';
+        if (!is_array($regels) || count($regels) === 0) {
+            $content .= '<div style="color:#6b7280;">Nog geen regels.</div>';
+        } else {
+            $content .= '<div style="display:flex; flex-direction:column; gap:10px;">';
+            foreach ($regels as $r) {
+                $rid = isset($r['id']) ? (int) $r['id'] : 0;
+                $en = isset($r['is_enabled']) && (int) $r['is_enabled'] === 1;
+                $ct = isset($r['condition_type']) ? (string) $r['condition_type'] : '';
+                $cv = isset($r['condition_value']) ? (string) $r['condition_value'] : '';
+                $at = isset($r['action_type']) ? (string) $r['action_type'] : '';
+                $av = isset($r['action_value']) ? (string) $r['action_value'] : '';
+
+                $condLabel = $ct === 'subject_contains' ? 'Als onderwerp bevat' : 'Als afzender bevat';
+                $actionLabel = $at === 'add_prompt' ? 'Voeg AI instructie toe' : 'Negeer';
+
+                $content .= '<div style="background:#ffffff; border:1px solid #9ca3af; border-radius:12px; padding:12px 12px;">';
+                $content .= '<div style="display:flex; justify-content:space-between; gap:10px; flex-wrap:wrap;">';
+                $content .= '<div style="font-weight:800;">Regel #' . e((string) $rid) . '</div>';
+                $content .= '<div style="color:#6b7280;">' . ($en ? 'Actief' : 'Uit') . '</div>';
+                $content .= '</div>';
+                $content .= '<div style="margin-top:8px;"><span style="font-weight:700;">Voorwaarde:</span> ' . e($condLabel) . ' <span style="font-weight:800;">' . e($cv) . '</span></div>';
+                $content .= '<div style="margin-top:4px;"><span style="font-weight:700;">Actie:</span> ' . e($actionLabel) . '</div>';
+                if ($at === 'add_prompt' && trim($av) !== '') {
+                    $content .= '<div style="margin-top:8px; background:#f3f4f6; border:1px solid #d1d5db; border-radius:10px; padding:10px 12px; white-space:pre-wrap;">' . e($av) . '</div>';
+                }
+                $content .= '<div style="display:flex; gap:10px; justify-content:flex-end; flex-wrap:wrap; margin-top:10px;">';
+
+                $content .= '<form method="post" action="/EmailDashboard.php?settings=1&amp;tab=rules" style="margin:0;">';
+                $content .= '<input type="hidden" name="csrf" value="' . e($csrf) . '">';
+                $content .= '<input type="hidden" name="actie" value="toggle_rule">';
+                $content .= '<input type="hidden" name="rule_id" value="' . e((string) $rid) . '">';
+                $content .= '<label style="display:flex; gap:8px; align-items:center; padding:8px 10px; border-radius:10px; border:1px solid #9ca3af; background:#e5e7eb; cursor:pointer;">';
+                $content .= '<input type="checkbox" name="is_enabled" value="1" ' . ($en ? 'checked' : '') . ' onchange="this.form.submit()">';
+                $content .= '<span>Actief</span>';
+                $content .= '</label>';
+                $content .= '</form>';
+
+                $content .= '<a href="/EmailDashboard.php?settings=1&amp;tab=rules&amp;edit_rule=' . e((string) $rid) . '" style="display:inline-block; padding:10px 14px; border-radius:10px; border:1px solid #9ca3af; background:#e5e7eb; color:#111827; text-decoration:none; font-weight:800;">Bewerken</a>';
+
+                $content .= '<form method="post" action="/EmailDashboard.php?settings=1&amp;tab=rules" style="margin:0;" onsubmit="return confirm(\'Regel verwijderen?\')">';
+                $content .= '<input type="hidden" name="csrf" value="' . e($csrf) . '">';
+                $content .= '<input type="hidden" name="actie" value="delete_rule">';
+                $content .= '<input type="hidden" name="rule_id" value="' . e((string) $rid) . '">';
+                $content .= '<button type="submit" style="background:#fee2e2; border:1px solid #ef4444; color:#111827; font-weight:800; padding:10px 14px; border-radius:10px; cursor:pointer;">Verwijderen</button>';
+                $content .= '</form>';
+
+                $content .= '</div></div>';
+            }
+            $content .= '</div>';
+        }
     } else {
         $content .= '<div style="font-weight:800; margin-bottom:8px;">Instellingen</div>';
         $content .= '<div style="color:#6b7280;">Kies links een onderdeel.</div>';
@@ -993,6 +1343,12 @@ if ($magSync) {
     $token = haalGmailAccessTokenOp();
     if (!empty($token['ok'])) {
         $accessToken = (string) $token['access_token'];
+        $actieveRegels = [];
+        try {
+            $actieveRegels = haalActieveEmailRules($conn);
+        } catch (Throwable) {
+            $actieveRegels = [];
+        }
         $lijst = gmailApiRequest('GET', 'users/me/messages', $accessToken, null, [
             'labelIds' => 'INBOX',
             'q' => 'is:unread',
@@ -1027,7 +1383,18 @@ if ($magSync) {
                         continue;
                     }
 
+                    $rulesResult = verwerkEmailRulesVoorMail($actieveRegels, $from, $subject);
+                    if (!empty($rulesResult['ignore'])) {
+                        gmailApiRequest('POST', 'users/me/messages/' . rawurlencode($msgId) . '/modify', $accessToken, [
+                            'removeLabelIds' => ['UNREAD'],
+                        ]);
+                        continue;
+                    }
+
                     if (bestaatEmailConceptVoorThread($conn, $threadId)) {
+                        gmailApiRequest('POST', 'users/me/messages/' . rawurlencode($msgId) . '/modify', $accessToken, [
+                            'removeLabelIds' => ['UNREAD'],
+                        ]);
                         continue;
                     }
 
@@ -1043,7 +1410,8 @@ if ($magSync) {
                         continue;
                     }
 
-                    $ai = roepOpenAiAanVoorEmailConcept($subject, $text);
+                    $extraInstructies = isset($rulesResult['extra_instructies']) ? (string) $rulesResult['extra_instructies'] : '';
+                    $ai = roepOpenAiAanVoorEmailConcept($subject, $text, $extraInstructies);
                     if (empty($ai['ok'])) {
                         continue;
                     }
