@@ -481,6 +481,52 @@
             return t.trim();
         }
 
+        function voegTekstMetLinksToe(paragraph, text) {
+            const t = String(text || '');
+            const urlRegex = /(https?:\/\/[^\s]+|www\.[^\s]+)/gi;
+
+            let lastIndex = 0;
+            let match = null;
+
+            while ((match = urlRegex.exec(t)) !== null) {
+                const start = match.index;
+                const raw = match[0] || '';
+
+                if (start > lastIndex) {
+                    paragraph.appendChild(document.createTextNode(t.slice(lastIndex, start)));
+                }
+
+                let urlText = raw;
+                let trailing = '';
+                while (urlText.length > 0 && /[)\].,!?;:]/.test(urlText.slice(-1))) {
+                    trailing = urlText.slice(-1) + trailing;
+                    urlText = urlText.slice(0, -1);
+                }
+
+                if (urlText !== '') {
+                    const href = urlText.startsWith('http') ? urlText : ('https://' + urlText);
+                    const a = document.createElement('a');
+                    a.href = href;
+                    a.textContent = urlText;
+                    a.target = '_blank';
+                    a.rel = 'noopener noreferrer';
+                    paragraph.appendChild(a);
+                } else {
+                    paragraph.appendChild(document.createTextNode(raw));
+                }
+
+                if (trailing !== '') {
+                    paragraph.appendChild(document.createTextNode(trailing));
+                }
+
+                lastIndex = start + raw.length;
+            }
+
+            if (lastIndex < t.length) {
+                paragraph.appendChild(document.createTextNode(t.slice(lastIndex)));
+            }
+        }
+
         // Deze helper maakt een normaal chatbericht in het scherm.
         function createMessageElement(type, text) {
             const wrapper = document.createElement('div');
@@ -489,7 +535,11 @@
             const paragraph = document.createElement('p');
             paragraph.style.whiteSpace = 'pre-wrap';
             paragraph.style.wordBreak = 'break-word';
-            paragraph.textContent = type === 'bot' ? normaliseerBotTekst(text) : String(text || '');
+            if (type === 'bot') {
+                voegTekstMetLinksToe(paragraph, normaliseerBotTekst(text));
+            } else {
+                paragraph.textContent = String(text || '');
+            }
 
             const time = document.createElement('span');
             time.className = 'message-time';

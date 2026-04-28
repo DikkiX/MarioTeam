@@ -298,6 +298,7 @@ function voerInterneFunctieUit($conn, $functieNaam, $arguments)
     }
 
     if ($functieNaam === 'zoek_productvoorraad') {
+        global $univ_web;
         // Hiermee kan de AI live voorraad en productinfo opvragen.
         $zoekterm = isset($arguments['zoekterm']) ? trim((string) $arguments['zoekterm']) : '';
 
@@ -335,6 +336,32 @@ function voerInterneFunctieUit($conn, $functieNaam, $arguments)
         ]);
 
         $resultaat = $stmt->fetchAll();
+
+        $basisUrl = '';
+        if (isset($univ_web) && is_string($univ_web) && $univ_web !== '') {
+            $basisUrl = 'https://www.' . $univ_web;
+        }
+
+        if (!empty($resultaat) && $basisUrl !== '') {
+            foreach ($resultaat as $idx => $row) {
+                $link = isset($row['link']) ? trim((string) $row['link']) : '';
+                if ($link === '') {
+                    continue;
+                }
+
+                if (preg_match('/^https?:\/\//i', $link) === 1) {
+                    $resultaat[$idx]['product_url'] = $link;
+                    continue;
+                }
+
+                if (preg_match('/^www\./i', $link) === 1) {
+                    $resultaat[$idx]['product_url'] = 'https://' . $link;
+                    continue;
+                }
+
+                $resultaat[$idx]['product_url'] = $basisUrl . '/' . ltrim($link, '/');
+            }
+        }
 
         return [
             'functie' => 'zoek_productvoorraad',
