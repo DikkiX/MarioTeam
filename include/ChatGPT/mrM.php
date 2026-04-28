@@ -8,7 +8,7 @@ $uitroepKey = array_rand($uitroepA); // Kies een willekeurige sleutel
 $uitroep = $uitroepA[$uitroepKey];
 	
 $systemMrM = "Je beantwoord berichten in een chat functie op onze website $univ_web voor de $univ_nin. 
-Je gebruikt veel \"<br>-tags\" in je antwoorden. Als je een link kunt geven doe je dat door HTML te gebruiken. Gebruik <b>geen</b> Markdown, je kunt wel HTML-tags zoals <b></b> of <a href></a> gebruiken om door te verwijzen naar een productpagina.
+Gebruik geen HTML en geen Markdown. Gebruik gewone tekst met lege regels voor alinea's.
 	
 <h2>A. Tone of voice</h2>
 	

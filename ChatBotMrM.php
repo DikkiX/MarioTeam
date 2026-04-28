@@ -459,13 +459,37 @@
             return cookieValue;
         }
 
+        function decodeHtmlEntities(text) {
+            const textarea = document.createElement('textarea');
+            textarea.innerHTML = String(text || '');
+            return textarea.value;
+        }
+
+        function normaliseerBotTekst(text) {
+            let t = String(text || '');
+            t = t.replace(/<\s*br\s*\/?\s*>/gi, '\n');
+            t = t.replace(/<\/\s*p\s*>\s*<\s*p[^>]*>/gi, '\n\n');
+            t = t.replace(/<\s*\/?p[^>]*>/gi, '');
+            t = t.replace(/<\s*li[^>]*>/gi, '\n- ');
+            t = t.replace(/<\s*\/li\s*>/gi, '');
+            t = t.replace(/<\s*\/?ul[^>]*>/gi, '\n');
+            t = t.replace(/<\s*\/?ol[^>]*>/gi, '\n');
+            t = t.replace(/<[^>]+>/g, '');
+            t = decodeHtmlEntities(t);
+            t = t.replace(/\r\n/g, '\n');
+            t = t.replace(/\n{3,}/g, '\n\n');
+            return t.trim();
+        }
+
         // Deze helper maakt een normaal chatbericht in het scherm.
         function createMessageElement(type, text) {
             const wrapper = document.createElement('div');
             wrapper.className = `chat-message ${type}`;
 
             const paragraph = document.createElement('p');
-            paragraph.textContent = text;
+            paragraph.style.whiteSpace = 'pre-wrap';
+            paragraph.style.wordBreak = 'break-word';
+            paragraph.textContent = type === 'bot' ? normaliseerBotTekst(text) : String(text || '');
 
             const time = document.createElement('span');
             time.className = 'message-time';
