@@ -112,7 +112,7 @@ function bouwToolsVoorOpenAi()
             'type' => 'function',
             'function' => [
                 'name' => 'zoek_bestelling',
-                'description' => 'Zoek live besteldata op in de tabel Bestellingen. Gebruik dit alleen als de klant zowel een bestelnummer als hetzelfde e-mailadres geeft dat bij de bestelling hoort.',
+                'description' => 'Zoek live besteldata op in de tabel Bestellingen en haal (waar mogelijk) ook de artikelen uit de bestelling op. Gebruik dit alleen als de klant zowel een bestelnummer als hetzelfde e-mailadres geeft dat bij de bestelling hoort.',
                 'parameters' => [
                     'type' => 'object',
                     'properties' => [
@@ -155,7 +155,7 @@ function bouwToolsVoorOpenAi()
 // Als bestelnummer en e-mail allebei in de tekst staan, kunnen we de functie afdwingen.
 function bepaalGeforceerdeToolChoice($berichtTekst)
 {
-    $heeftBestelWoord = preg_match('/bestelling|bestelnummer|order|status/i', $berichtTekst) === 1;
+    $heeftBestelWoord = preg_match('/bestelling|bestelnummer|order|status|inhoud|artikelen|orderregels|wat heb ik besteld|wat zit er/i', $berichtTekst) === 1;
     $heeftEmail = preg_match('/[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}/i', $berichtTekst) === 1;
     $heeftBestelnummer = preg_match('/\b\d{4,}\b/', $berichtTekst) === 1;
 
@@ -235,6 +235,213 @@ function roepOpenAiAan($messages, $tools = [], $toolChoice = 'auto')
     return $decoded;
 }
 
+function isVeiligeDbNaam($name)
+{
+    return is_string($name) && preg_match('/^[A-Za-z0-9_]+$/', $name) === 1;
+}
+
+function haalBestellingArtikelenOp($conn, $bestellingId)
+{
+    $bestellingId = (int) $bestellingId;
+    if ($bestellingId <= 0) {
+        return [];
+    }
+
+    $orderKolommen = [
+        'bestelling_id',
+        'bestellingid',
+        'bestelling',
+        'bestel_id',
+        'bestelid',
+        'order_id',
+        'orderid',
+        'bestelnummer',
+    ];
+    $aantalKolommen = [
+        'aantal',
+        'qty',
+        'quantity',
+        'amount',
+    ];
+    $naamKolommen = [
+        'productnaam',
+        'product_naam',
+        'titel',
+        'naam',
+        'product',
+        'omschrijving',
+        'artikel',
+        'item',
+    ];
+    $linkKolommen = [
+        'link',
+        'product_link',
+        'artikel_link',
+        'game_link',
+        'winkel_link',
+    ];
+
+    $kiesSqlParts = [];
+    $kiesSqlParts[] = "SUM(CASE WHEN LOWER(column_name) IN ('" . implode("','", $orderKolommen) . "') THEN 1 ELSE 0 END) AS has_order";
+    $kiesSqlParts[] = "SUM(CASE WHEN LOWER(column_name) IN ('" . implode("','", $aantalKolommen) . "') THEN 1 ELSE 0 END) AS has_qty";
+    $kiesSqlParts[] = "SUM(CASE WHEN LOWER(column_name) IN ('" . implode("','", $naamKolommen) . "') THEN 1 ELSE 0 END) AS has_name";
+    $kiesSqlParts[] = "SUM(CASE WHEN LOWER(column_name) IN ('" . implode("','", $linkKolommen) . "') THEN 1 ELSE 0 END) AS has_link";
+
+    $kiesSql = "
+        SELECT table_name, " . implode(",\n               ", $kiesSqlParts) . "
+        FROM information_schema.columns
+        WHERE table_schema = DATABASE()
+        GROUP BY table_name
+        HAVING has_order > 0 AND (has_name > 0 OR has_link > 0)
+        ORDER BY (has_order + has_qty + has_name + has_link) DESC
+        LIMIT 10
+    ";
+
+    try {
+        $kiesStmt = $conn->prepare($kiesSql);
+        $kiesStmt->execute();
+        $candidates = $kiesStmt->fetchAll();
+    } catch (Throwable) {
+        return [];
+    }
+
+    if (empty($candidates)) {
+        return [];
+    }
+
+    $table = '';
+    foreach ($candidates as $cand) {
+        $t = isset($cand['table_name']) ? (string) $cand['table_name'] : '';
+        if ($t !== '' && isVeiligeDbNaam($t)) {
+            $table = $t;
+            break;
+        }
+    }
+
+    if ($table === '') {
+        return [];
+    }
+
+    try {
+        $kolomStmt = $conn->prepare("
+            SELECT column_name
+            FROM information_schema.columns
+            WHERE table_schema = DATABASE() AND table_name = :t
+        ");
+        $kolomStmt->execute([':t' => $table]);
+        $kolommen = $kolomStmt->fetchAll();
+    } catch (Throwable) {
+        return [];
+    }
+
+    if (empty($kolommen)) {
+        return [];
+    }
+
+    $kolomMap = [];
+    foreach ($kolommen as $k) {
+        if (!isset($k['column_name'])) {
+            continue;
+        }
+        $orig = (string) $k['column_name'];
+        $lower = strtolower($orig);
+        if ($lower !== '' && isVeiligeDbNaam($orig)) {
+            $kolomMap[$lower] = $orig;
+        }
+    }
+
+    $orderCol = '';
+    foreach ($orderKolommen as $pref) {
+        if (isset($kolomMap[$pref])) {
+            $orderCol = $kolomMap[$pref];
+            break;
+        }
+    }
+    if ($orderCol === '') {
+        return [];
+    }
+
+    $nameCol = '';
+    foreach ($naamKolommen as $pref) {
+        if (isset($kolomMap[$pref])) {
+            $nameCol = $kolomMap[$pref];
+            break;
+        }
+    }
+
+    $qtyCol = '';
+    foreach ($aantalKolommen as $pref) {
+        if (isset($kolomMap[$pref])) {
+            $qtyCol = $kolomMap[$pref];
+            break;
+        }
+    }
+
+    $linkCol = '';
+    foreach ($linkKolommen as $pref) {
+        if (isset($kolomMap[$pref])) {
+            $linkCol = $kolomMap[$pref];
+            break;
+        }
+    }
+
+    if ($nameCol === '' && $linkCol === '') {
+        return [];
+    }
+
+    $artikelen = [];
+
+    try {
+        if ($nameCol !== '') {
+            $selectAantal = $qtyCol !== '' ? ("COALESCE(`$qtyCol`, 1)") : "1";
+            $stmt = $conn->prepare("
+                SELECT TRIM(CAST(`$nameCol` AS CHAR)) AS productnaam,
+                       $selectAantal AS aantal
+                FROM `$table`
+                WHERE `$orderCol` = :id
+                LIMIT 200
+            ");
+            $stmt->execute([':id' => $bestellingId]);
+            $rows = $stmt->fetchAll();
+        } else {
+            $selectAantal = $qtyCol !== '' ? ("COALESCE(r.`$qtyCol`, 1)") : "1";
+            $stmt = $conn->prepare("
+                SELECT TRIM(COALESCE(w.titel, r.`$linkCol`)) AS productnaam,
+                       $selectAantal AS aantal
+                FROM `$table` r
+                LEFT JOIN Winkel w ON w.link = r.`$linkCol`
+                WHERE r.`$orderCol` = :id
+                LIMIT 200
+            ");
+            $stmt->execute([':id' => $bestellingId]);
+            $rows = $stmt->fetchAll();
+        }
+    } catch (Throwable) {
+        return [];
+    }
+
+    if (empty($rows)) {
+        return [];
+    }
+
+    foreach ($rows as $row) {
+        $naam = isset($row['productnaam']) ? trim((string) $row['productnaam']) : '';
+        $aantal = isset($row['aantal']) ? (int) $row['aantal'] : 1;
+        if ($aantal <= 0) {
+            $aantal = 1;
+        }
+        if ($naam === '') {
+            continue;
+        }
+        $artikelen[] = [
+            'productnaam' => $naam,
+            'aantal' => $aantal,
+        ];
+    }
+
+    return $artikelen;
+}
+
 // Hier voeren we de echte databasefunctie uit die OpenAI vraagt.
 // We geven daarna alleen ruwe data terug, nog geen mooi klantantwoord.
 function voerInterneFunctieUit($conn, $functieNaam, $arguments)
@@ -290,10 +497,16 @@ function voerInterneFunctieUit($conn, $functieNaam, $arguments)
         ]);
         $resultaat = $stmt->fetch();
 
+        $artikelen = [];
+        if ($resultaat !== false) {
+            $artikelen = haalBestellingArtikelenOp($conn, $bestellingId);
+        }
+
         return [
             'functie' => 'zoek_bestelling',
             'gevonden' => $resultaat !== false,
             'resultaat' => $resultaat,
+            'artikelen' => $artikelen,
         ];
     }
 
@@ -434,7 +647,7 @@ function maakBerichtenVoorOpenAi($conn, $bericht)
     global $univ_one, $univ_web, $univ_nin, $univ_web_text, $univ_mar, $univ_zoeken;
     include_once $_SERVER['DOCUMENT_ROOT'] . '/include/ChatGPT/mrM.php';
 
-    $basisPrompt = 'Je bent een klantenservice assistent voor MarioSwitch.nl. Als je live data nodig hebt, gebruik je een functie. Geef geen data op basis van aannames als een functie nodig is. Noem nooit exacte voorraadaantallen aan klanten. Zeg alleen of iets op voorraad is of niet. Voor orderdata moet de klant eerst zowel een bestelnummer als het juiste e-mailadres geven.';
+    $basisPrompt = 'Je bent een klantenservice assistent voor MarioSwitch.nl. Als je live data nodig hebt, gebruik je een functie. Geef geen data op basis van aannames als een functie nodig is. Noem nooit exacte voorraadaantallen aan klanten. Zeg alleen of iets op voorraad is of niet. Voor orderdata moet de klant eerst zowel een bestelnummer als het juiste e-mailadres geven. Als je via zoek_bestelling artikelen terugkrijgt, presenteer die als een korte lijst met per regel: "{aantal}x {productnaam}". Als de klant vraagt of een bepaald artikel in de bestelling zit, antwoord ja/nee op basis van die lijst.';
 
     // Voeg de originele Mr M tone of voice toe
     $systemPrompt = $basisPrompt . "\n\n" . ($systemMrM ?? '');
