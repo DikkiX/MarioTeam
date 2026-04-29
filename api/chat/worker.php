@@ -370,6 +370,60 @@ function parseBestellingItemsTekst($itemsTekst)
     return $artikelen;
 }
 
+function haalBestellingOpMetVelden($conn, $bestellingId, $email, $velden)
+{
+    $bestellingId = (int) $bestellingId;
+    $email = trim((string) $email);
+    if ($bestellingId <= 0 || $email === '') {
+        return false;
+    }
+
+    $veldenTekst = is_array($velden) ? implode(', ', $velden) : '';
+    if ($veldenTekst === '') {
+        return false;
+    }
+
+    $stmt = $conn->prepare("
+        SELECT $veldenTekst
+        FROM Bestellingen
+        WHERE id = :id AND mail = :email
+        LIMIT 1
+    ");
+    $stmt->execute([
+        ':id' => $bestellingId,
+        ':email' => $email,
+    ]);
+    return $stmt->fetch();
+}
+
+function haalBestellingOp($conn, $bestellingId, $email)
+{
+    $basis = ['id', 'betaling', 'totaal', 'status', 'verzending', 'datum', 'PayStatus', 'tracktrace'];
+    $extra = ['items', 'verzenddatum', 'verzonden', 'verzonden_op', 'verzend_op', 'datum_verzonden', 'verzend_datum'];
+
+    try {
+        $row = haalBestellingOpMetVelden($conn, $bestellingId, $email, array_merge($basis, $extra));
+        if ($row !== false) {
+            return $row;
+        }
+    } catch (Throwable) {
+    }
+
+    try {
+        $row = haalBestellingOpMetVelden($conn, $bestellingId, $email, array_merge($basis, ['items']));
+        if ($row !== false) {
+            return $row;
+        }
+    } catch (Throwable) {
+    }
+
+    try {
+        return haalBestellingOpMetVelden($conn, $bestellingId, $email, $basis);
+    } catch (Throwable) {
+        return false;
+    }
+}
+
 function haalBestellingArtikelenOp($conn, $bestellingId)
 {
     $bestellingId = (int) $bestellingId;
@@ -700,23 +754,7 @@ function voerInterneFunctieUit($conn, $functieNaam, $arguments)
             ];
         }
 
-        // Pas na de check halen we de orderinformatie op.
-        // We geven alleen de velden terug die nodig zijn voor de statusvraag.
-        $selectVelden = 'id, betaling, totaal, status, verzending, datum, PayStatus, tracktrace';
-        if (tabelHeeftKolom($conn, 'Bestellingen', 'items')) {
-            $selectVelden .= ', items';
-        }
-        $stmt = $conn->prepare("
-            SELECT $selectVelden
-            FROM Bestellingen
-            WHERE id = :id AND mail = :email
-            LIMIT 1
-        ");
-        $stmt->execute([
-            ':id' => $bestellingId,
-            ':email' => $email,
-        ]);
-        $resultaat = $stmt->fetch();
+        $resultaat = haalBestellingOp($conn, $bestellingId, $email);
 
         $artikelenInfo = [
             'gevonden' => false,
@@ -742,6 +780,38 @@ function voerInterneFunctieUit($conn, $functieNaam, $arguments)
                     ];
                 }
             }
+        }
+
+        $verzendStatus = 'onbekend';
+        $tracktrace = is_array($resultaat) && isset($resultaat['tracktrace']) ? trim((string) $resultaat['tracktrace']) : '';
+        $statusTekst = is_array($resultaat) && isset($resultaat['status']) ? trim((string) $resultaat['status']) : '';
+
+        $heeftVerzendDatum = false;
+        foreach (['verzenddatum', 'verzonden_op', 'verzend_op', 'datum_verzonden', 'verzend_datum'] as $k) {
+            if (is_array($resultaat) && isset($resultaat[$k]) && trim((string) $resultaat[$k]) !== '') {
+                $heeftVerzendDatum = true;
+                break;
+            }
+        }
+
+        if ($tracktrace !== '') {
+            $verzendStatus = 'verzonden';
+        } elseif ($heeftVerzendDatum) {
+            $verzendStatus = 'verzonden';
+        } elseif ($statusTekst !== '' && preg_match('/verzend|verzonden|shipped/i', $statusTekst) === 1) {
+            $verzendStatus = 'verzonden';
+        } else {
+            $verzendStatus = 'niet_verzonden';
+        }
+
+        if (is_array($resultaat)) {
+            $resultaat['verzend_status'] = $verzendStatus;
+        }
+
+        if ($artikelenInfo['bron'] !== '') {
+            schrijfWorkerLog('Bestelling ' . $bestellingId . ' artikelen bron: ' . $artikelenInfo['bron'] . ', count: ' . count((array) ($artikelenInfo['artikelen'] ?? [])));
+        } else {
+            schrijfWorkerLog('Bestelling ' . $bestellingId . ' artikelen niet gevonden. items_len=' . (isset($resultaat['items']) ? strlen((string) $resultaat['items']) : 0));
         }
 
         return [
@@ -892,7 +962,7 @@ function maakBerichtenVoorOpenAi($conn, $bericht)
     global $univ_one, $univ_web, $univ_nin, $univ_web_text, $univ_mar, $univ_zoeken;
     include_once $_SERVER['DOCUMENT_ROOT'] . '/include/ChatGPT/mrM.php';
 
-    $basisPrompt = 'Je bent een klantenservice assistent voor MarioSwitch.nl. Als je live data nodig hebt, gebruik je een functie. Geef geen data op basis van aannames als een functie nodig is. Noem nooit exacte voorraadaantallen aan klanten. Zeg alleen of iets op voorraad is of niet. Voor orderdata moet de klant eerst zowel een bestelnummer als het juiste e-mailadres geven. Als je via zoek_bestelling artikelen terugkrijgt en artikelen_gevonden true is, presenteer die als een korte lijst met per regel: "{aantal}x {productnaam}". Als artikelen_gevonden false is, zeg dan dat je de artikelregels nu niet kunt ophalen (en claim niet dat er geen artikelen zijn). Als de klant vraagt of een bepaald artikel in de bestelling zit, antwoord ja/nee op basis van de live lijst.';
+    $basisPrompt = 'Je bent een klantenservice assistent voor MarioSwitch.nl. Als je live data nodig hebt, gebruik je een functie. Geef geen data op basis van aannames als een functie nodig is. Noem nooit exacte voorraadaantallen aan klanten. Zeg alleen of iets op voorraad is of niet. Voor orderdata moet de klant eerst zowel een bestelnummer als het juiste e-mailadres geven. Als je via zoek_bestelling artikelen terugkrijgt en artikelen_gevonden true is, presenteer die als een korte lijst met per regel: "{aantal}x {productnaam}". Als artikelen_gevonden false is, zeg dan dat je de artikelregels nu niet kunt ophalen (en claim niet dat er geen artikelen zijn). Voor verzenden: gebruik resultaat.verzend_status (verzonden/niet_verzonden) en toon track&trace als die er is.';
 
     // Voeg de originele Mr M tone of voice toe
     $systemPrompt = $basisPrompt . "\n\n" . ($systemMrM ?? '');
