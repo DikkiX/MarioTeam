@@ -337,21 +337,32 @@ function parseBestellingItemsTekst($itemsTekst)
             continue;
         }
 
-        if (preg_match('/^(verzendkosten|totaal|korting|betaal|betaling)\s*[:=]/i', $regel) === 1) {
-            break;
+        if (preg_match('/^(korting|betaal|betaling)\s*[:=]/i', $regel) === 1) {
+            continue;
+        }
+        if (preg_match('/^verzendkosten\s*[:=]/i', $regel) === 1) {
+            continue;
+        }
+        if (preg_match('/^totaal\s*[:=]/i', $regel) === 1) {
+            continue;
         }
 
         $aantal = 1;
         $naam = $regel;
+        $prijsEuro = null;
 
         if (preg_match('/^\s*(\d+)\s*[x×]\s*(.+)\s*$/u', $regel, $m) === 1) {
             $aantal = (int) $m[1];
             $naam = trim((string) $m[2]);
         }
 
-        $naam = preg_replace('/\s*->\s*[\d.,]+\s*euro\s*$/i', '', (string) $naam);
-        $naam = preg_replace('/\s*->\s*[\d.,]+\s*$/i', '', (string) $naam);
-        $naam = trim((string) $naam);
+        if (preg_match('/^(.*?)\s*->\s*([\d.,]+)\s*euro\s*$/i', (string) $naam, $m) === 1) {
+            $naam = trim((string) $m[1]);
+            $rawPrijs = str_replace(',', '.', (string) $m[2]);
+            if (is_numeric($rawPrijs)) {
+                $prijsEuro = (float) $rawPrijs;
+            }
+        }
 
         if ($aantal <= 0) {
             $aantal = 1;
@@ -360,11 +371,13 @@ function parseBestellingItemsTekst($itemsTekst)
             continue;
         }
 
-        $key = lowerTekst($naam);
+        $prijsKey = $prijsEuro === null ? '' : number_format($prijsEuro, 2, '.', '');
+        $key = lowerTekst($naam) . '|' . $prijsKey;
         if (!isset($samengevoegd[$key])) {
             $samengevoegd[$key] = [
                 'productnaam' => $naam,
                 'aantal' => 0,
+                'prijs_euro' => $prijsEuro,
             ];
         }
         $samengevoegd[$key]['aantal'] += $aantal;
@@ -376,6 +389,53 @@ function parseBestellingItemsTekst($itemsTekst)
     });
 
     return $artikelen;
+}
+
+function parseBestellingKostenTekst($itemsTekst)
+{
+    $t = trim((string) $itemsTekst);
+    if ($t === '') {
+        return [
+            'verzendkosten_euro' => null,
+            'totaal_euro' => null,
+        ];
+    }
+
+    $t = str_replace(["\r\n", "\r"], "\n", $t);
+    $t = preg_replace('/<\s*br\s*\/?\s*>/i', "\n", $t);
+    $t = strip_tags($t);
+    $t = html_entity_decode($t, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+
+    $verzend = null;
+    $totaal = null;
+    $delen = preg_split('/\n+/', $t);
+    if (!is_array($delen)) {
+        $delen = [$t];
+    }
+
+    foreach ($delen as $deel) {
+        $regel = trim((string) $deel);
+        if ($regel === '') {
+            continue;
+        }
+        if (preg_match('/^verzendkosten\s*:\s*([\d.,]+)\s*euro\s*$/i', $regel, $m) === 1) {
+            $raw = str_replace(',', '.', (string) $m[1]);
+            if (is_numeric($raw)) {
+                $verzend = (float) $raw;
+            }
+        }
+        if (preg_match('/^totaal\s*:\s*([\d.,]+)\s*euro\s*$/i', $regel, $m) === 1) {
+            $raw = str_replace(',', '.', (string) $m[1]);
+            if (is_numeric($raw)) {
+                $totaal = (float) $raw;
+            }
+        }
+    }
+
+    return [
+        'verzendkosten_euro' => $verzend,
+        'totaal_euro' => $totaal,
+    ];
 }
 
 function haalTrackCodeUitTracktrace($tracktrace)
@@ -431,7 +491,7 @@ function haalBestellingOpMetVelden($conn, $bestellingId, $email, $velden)
 
 function haalBestellingOp($conn, $bestellingId, $email)
 {
-    $basis = ['id', 'betaling', 'totaal', 'status', 'verzending', 'datum', 'PayStatus', 'tracktrace'];
+    $basis = ['id', 'betaling', 'verzendkosten', 'totaal', 'totaal_site', 'status', 'verzending', 'datum', 'PayStatus', 'tracktrace'];
     $extra = ['items', 'inpakdatum', 'verzenddatum', 'verzonden', 'verzonden_op', 'verzend_op', 'datum_verzonden', 'verzend_datum'];
 
     try {
@@ -842,6 +902,22 @@ function voerInterneFunctieUit($conn, $functieNaam, $arguments)
             $resultaat['track_code'] = $trackCode;
         }
 
+        if (is_array($resultaat) && isset($resultaat['items']) && trim((string) $resultaat['items']) !== '') {
+            $kostenUitItems = parseBestellingKostenTekst($resultaat['items']);
+            if (
+                (!isset($resultaat['verzendkosten']) || (float) $resultaat['verzendkosten'] <= 0)
+                && $kostenUitItems['verzendkosten_euro'] !== null
+            ) {
+                $resultaat['verzendkosten'] = $kostenUitItems['verzendkosten_euro'];
+            }
+            if (
+                (!isset($resultaat['totaal']) || (float) $resultaat['totaal'] <= 0)
+                && $kostenUitItems['totaal_euro'] !== null
+            ) {
+                $resultaat['totaal'] = $kostenUitItems['totaal_euro'];
+            }
+        }
+
         if ($artikelenInfo['bron'] !== '') {
             schrijfWorkerLog('Bestelling ' . $bestellingId . ' artikelen bron: ' . $artikelenInfo['bron'] . ', count: ' . count((array) ($artikelenInfo['artikelen'] ?? [])));
         } else {
@@ -996,7 +1072,7 @@ function maakBerichtenVoorOpenAi($conn, $bericht)
     global $univ_one, $univ_web, $univ_nin, $univ_web_text, $univ_mar, $univ_zoeken;
     include_once $_SERVER['DOCUMENT_ROOT'] . '/include/ChatGPT/mrM.php';
 
-    $basisPrompt = 'Je bent een klantenservice assistent voor MarioSwitch.nl. Als je live data nodig hebt, gebruik je een functie. Geef geen data op basis van aannames als een functie nodig is. Noem nooit exacte voorraadaantallen aan klanten. Zeg alleen of iets op voorraad is of niet. Noem geen bedragen/prijzen tenzij de klant er expliciet om vraagt. Voor orderdata moet de klant eerst zowel een bestelnummer als het juiste e-mailadres geven. Als je via zoek_bestelling artikelen terugkrijgt en artikelen_gevonden true is, presenteer die als een korte lijst met per regel: "{aantal}x {productnaam}". Als artikelen_gevonden false is, zeg dan dat je de artikelregels nu niet kunt ophalen (en claim niet dat er geen artikelen zijn). Voor verzenden: gebruik resultaat.verzend_status (verzonden/niet_verzonden). Als resultaat.track_code gevuld is, toon die. Als track_code leeg is, zeg dat er (nog) geen track&trace code beschikbaar is.';
+    $basisPrompt = 'Je bent een klantenservice assistent voor MarioSwitch.nl. Als je live data nodig hebt, gebruik je een functie. Geef geen data op basis van aannames als een functie nodig is. Noem nooit exacte voorraadaantallen aan klanten. Zeg alleen of iets op voorraad is of niet. Voor orderdata moet de klant eerst zowel een bestelnummer als het juiste e-mailadres geven. Als je via zoek_bestelling artikelen terugkrijgt en artikelen_gevonden true is, presenteer die als een nette lijst met per regel: "{aantal}x {productnaam} — {prijs} euro" (als prijs bekend is). Toon daarna altijd: "Verzendkosten: X euro" en "Totaal: Y euro" op basis van resultaat.verzendkosten en resultaat.totaal. Als artikelen_gevonden false is, zeg dan dat je de artikelregels nu niet kunt ophalen (en claim niet dat er geen artikelen zijn). Voor verzenden: gebruik resultaat.verzend_status (verzonden/niet_verzonden). Als resultaat.track_code gevuld is, toon die. Als track_code leeg is, zeg dat er (nog) geen track&trace code beschikbaar is.';
 
     // Voeg de originele Mr M tone of voice toe
     $systemPrompt = $basisPrompt . "\n\n" . ($systemMrM ?? '');
