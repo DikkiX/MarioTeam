@@ -294,6 +294,82 @@ function haalKolommenVoorTabel($conn, $table)
     }
 }
 
+function tabelHeeftKolom($conn, $table, $kolom)
+{
+    if (!is_string($table) || $table === '' || !isVeiligeDbNaam($table)) {
+        return false;
+    }
+    if (!is_string($kolom) || $kolom === '' || !isVeiligeDbNaam($kolom)) {
+        return false;
+    }
+    try {
+        $stmt = $conn->prepare("SHOW COLUMNS FROM `$table` LIKE :c");
+        $stmt->execute([':c' => $kolom]);
+        $row = $stmt->fetch();
+        return $row !== false;
+    } catch (Throwable) {
+        return false;
+    }
+}
+
+function parseBestellingItemsTekst($itemsTekst)
+{
+    $t = trim((string) $itemsTekst);
+    if ($t === '') {
+        return [];
+    }
+
+    $t = str_replace(["\r\n", "\r"], "\n", $t);
+    $t = preg_replace('/<\s*br\s*\/?\s*>/i', "\n", $t);
+    $t = strip_tags($t);
+    $t = html_entity_decode($t, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+
+    $delen = preg_split('/\n+/', $t);
+    if (!is_array($delen)) {
+        $delen = [$t];
+    }
+
+    $samengevoegd = [];
+
+    foreach ($delen as $deel) {
+        $regel = trim((string) $deel);
+        if ($regel === '') {
+            continue;
+        }
+
+        $aantal = 1;
+        $naam = $regel;
+
+        if (preg_match('/^\s*(\d+)\s*[x×]\s*(.+)\s*$/u', $regel, $m) === 1) {
+            $aantal = (int) $m[1];
+            $naam = trim((string) $m[2]);
+        }
+
+        if ($aantal <= 0) {
+            $aantal = 1;
+        }
+        if ($naam === '') {
+            continue;
+        }
+
+        $key = lowerTekst($naam);
+        if (!isset($samengevoegd[$key])) {
+            $samengevoegd[$key] = [
+                'productnaam' => $naam,
+                'aantal' => 0,
+            ];
+        }
+        $samengevoegd[$key]['aantal'] += $aantal;
+    }
+
+    $artikelen = array_values($samengevoegd);
+    usort($artikelen, function ($a, $b) {
+        return strcmp((string) ($a['productnaam'] ?? ''), (string) ($b['productnaam'] ?? ''));
+    });
+
+    return $artikelen;
+}
+
 function haalBestellingArtikelenOp($conn, $bestellingId)
 {
     $bestellingId = (int) $bestellingId;
@@ -626,8 +702,12 @@ function voerInterneFunctieUit($conn, $functieNaam, $arguments)
 
         // Pas na de check halen we de orderinformatie op.
         // We geven alleen de velden terug die nodig zijn voor de statusvraag.
+        $selectVelden = 'id, betaling, totaal, status, verzending, datum, PayStatus, tracktrace';
+        if (tabelHeeftKolom($conn, 'Bestellingen', 'items')) {
+            $selectVelden .= ', items';
+        }
         $stmt = $conn->prepare("
-            SELECT id, betaling, totaal, status, verzending, datum, PayStatus, tracktrace
+            SELECT $selectVelden
             FROM Bestellingen
             WHERE id = :id AND mail = :email
             LIMIT 1
@@ -646,6 +726,22 @@ function voerInterneFunctieUit($conn, $functieNaam, $arguments)
         ];
         if ($resultaat !== false) {
             $artikelenInfo = haalBestellingArtikelenOp($conn, $bestellingId);
+
+            if (
+                (bool) ($artikelenInfo['gevonden'] ?? false) === false
+                && isset($resultaat['items'])
+                && trim((string) $resultaat['items']) !== ''
+            ) {
+                $fallback = parseBestellingItemsTekst($resultaat['items']);
+                if (!empty($fallback)) {
+                    $artikelenInfo = [
+                        'gevonden' => true,
+                        'artikelen' => $fallback,
+                        'bron' => 'Bestellingen.items',
+                        'message' => '',
+                    ];
+                }
+            }
         }
 
         return [
