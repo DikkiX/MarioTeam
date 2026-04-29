@@ -337,6 +337,10 @@ function parseBestellingItemsTekst($itemsTekst)
             continue;
         }
 
+        if (preg_match('/^(verzendkosten|totaal|korting|betaal|betaling)\s*[:=]/i', $regel) === 1) {
+            break;
+        }
+
         $aantal = 1;
         $naam = $regel;
 
@@ -344,6 +348,10 @@ function parseBestellingItemsTekst($itemsTekst)
             $aantal = (int) $m[1];
             $naam = trim((string) $m[2]);
         }
+
+        $naam = preg_replace('/\s*->\s*[\d.,]+\s*euro\s*$/i', '', (string) $naam);
+        $naam = preg_replace('/\s*->\s*[\d.,]+\s*$/i', '', (string) $naam);
+        $naam = trim((string) $naam);
 
         if ($aantal <= 0) {
             $aantal = 1;
@@ -368,6 +376,31 @@ function parseBestellingItemsTekst($itemsTekst)
     });
 
     return $artikelen;
+}
+
+function haalTrackCodeUitTracktrace($tracktrace)
+{
+    $tt = trim((string) $tracktrace);
+    if ($tt === '') {
+        return '';
+    }
+
+    $delen = preg_split('/\|+/', $tt);
+    if (!is_array($delen) || empty($delen)) {
+        return '';
+    }
+
+    for ($i = count($delen) - 1; $i >= 0; $i--) {
+        $candidate = trim((string) $delen[$i]);
+        if ($candidate === '') {
+            continue;
+        }
+        if (preg_match('/^[A-Z0-9]{6,}$/i', $candidate) === 1) {
+            return $candidate;
+        }
+    }
+
+    return '';
 }
 
 function haalBestellingOpMetVelden($conn, $bestellingId, $email, $velden)
@@ -399,7 +432,7 @@ function haalBestellingOpMetVelden($conn, $bestellingId, $email, $velden)
 function haalBestellingOp($conn, $bestellingId, $email)
 {
     $basis = ['id', 'betaling', 'totaal', 'status', 'verzending', 'datum', 'PayStatus', 'tracktrace'];
-    $extra = ['items', 'verzenddatum', 'verzonden', 'verzonden_op', 'verzend_op', 'datum_verzonden', 'verzend_datum'];
+    $extra = ['items', 'inpakdatum', 'verzenddatum', 'verzonden', 'verzonden_op', 'verzend_op', 'datum_verzonden', 'verzend_datum'];
 
     try {
         $row = haalBestellingOpMetVelden($conn, $bestellingId, $email, array_merge($basis, $extra));
@@ -785,27 +818,28 @@ function voerInterneFunctieUit($conn, $functieNaam, $arguments)
         $verzendStatus = 'onbekend';
         $tracktrace = is_array($resultaat) && isset($resultaat['tracktrace']) ? trim((string) $resultaat['tracktrace']) : '';
         $statusTekst = is_array($resultaat) && isset($resultaat['status']) ? trim((string) $resultaat['status']) : '';
+        $verzendingTekst = is_array($resultaat) && isset($resultaat['verzending']) ? trim((string) $resultaat['verzending']) : '';
+        $trackCode = haalTrackCodeUitTracktrace($tracktrace);
 
-        $heeftVerzendDatum = false;
-        foreach (['verzenddatum', 'verzonden_op', 'verzend_op', 'datum_verzonden', 'verzend_datum'] as $k) {
-            if (is_array($resultaat) && isset($resultaat[$k]) && trim((string) $resultaat[$k]) !== '') {
-                $heeftVerzendDatum = true;
-                break;
-            }
-        }
+        $heeftVerzendTekst = $verzendingTekst !== '' && preg_match('/\bverzonden\b/i', $verzendingTekst) === 1;
+        $heeftInpakDatum = is_array($resultaat) && isset($resultaat['inpakdatum']) && (int) $resultaat['inpakdatum'] > 0;
+        $statusIsVerzonden = $statusTekst === '3';
 
-        if ($tracktrace !== '') {
+        if ($trackCode !== '') {
             $verzendStatus = 'verzonden';
-        } elseif ($heeftVerzendDatum) {
+        } elseif ($statusIsVerzonden) {
             $verzendStatus = 'verzonden';
-        } elseif ($statusTekst !== '' && preg_match('/verzend|verzonden|shipped/i', $statusTekst) === 1) {
+        } elseif ($heeftVerzendTekst) {
             $verzendStatus = 'verzonden';
+        } elseif ($heeftInpakDatum) {
+            $verzendStatus = 'niet_verzonden';
         } else {
             $verzendStatus = 'niet_verzonden';
         }
 
         if (is_array($resultaat)) {
             $resultaat['verzend_status'] = $verzendStatus;
+            $resultaat['track_code'] = $trackCode;
         }
 
         if ($artikelenInfo['bron'] !== '') {
@@ -962,7 +996,7 @@ function maakBerichtenVoorOpenAi($conn, $bericht)
     global $univ_one, $univ_web, $univ_nin, $univ_web_text, $univ_mar, $univ_zoeken;
     include_once $_SERVER['DOCUMENT_ROOT'] . '/include/ChatGPT/mrM.php';
 
-    $basisPrompt = 'Je bent een klantenservice assistent voor MarioSwitch.nl. Als je live data nodig hebt, gebruik je een functie. Geef geen data op basis van aannames als een functie nodig is. Noem nooit exacte voorraadaantallen aan klanten. Zeg alleen of iets op voorraad is of niet. Voor orderdata moet de klant eerst zowel een bestelnummer als het juiste e-mailadres geven. Als je via zoek_bestelling artikelen terugkrijgt en artikelen_gevonden true is, presenteer die als een korte lijst met per regel: "{aantal}x {productnaam}". Als artikelen_gevonden false is, zeg dan dat je de artikelregels nu niet kunt ophalen (en claim niet dat er geen artikelen zijn). Voor verzenden: gebruik resultaat.verzend_status (verzonden/niet_verzonden) en toon track&trace als die er is.';
+    $basisPrompt = 'Je bent een klantenservice assistent voor MarioSwitch.nl. Als je live data nodig hebt, gebruik je een functie. Geef geen data op basis van aannames als een functie nodig is. Noem nooit exacte voorraadaantallen aan klanten. Zeg alleen of iets op voorraad is of niet. Noem geen bedragen/prijzen tenzij de klant er expliciet om vraagt. Voor orderdata moet de klant eerst zowel een bestelnummer als het juiste e-mailadres geven. Als je via zoek_bestelling artikelen terugkrijgt en artikelen_gevonden true is, presenteer die als een korte lijst met per regel: "{aantal}x {productnaam}". Als artikelen_gevonden false is, zeg dan dat je de artikelregels nu niet kunt ophalen (en claim niet dat er geen artikelen zijn). Voor verzenden: gebruik resultaat.verzend_status (verzonden/niet_verzonden). Als resultaat.track_code gevuld is, toon die. Als track_code leeg is, zeg dat er (nog) geen track&trace code beschikbaar is.';
 
     // Voeg de originele Mr M tone of voice toe
     $systemPrompt = $basisPrompt . "\n\n" . ($systemMrM ?? '');
