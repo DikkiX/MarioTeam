@@ -424,6 +424,8 @@ function haalBestellingArtikelenOp($conn, $bestellingId)
         return [];
     }
 
+    $samengevoegd = [];
+
     foreach ($rows as $row) {
         $naam = isset($row['productnaam']) ? trim((string) $row['productnaam']) : '';
         $aantal = isset($row['aantal']) ? (int) $row['aantal'] : 1;
@@ -433,11 +435,21 @@ function haalBestellingArtikelenOp($conn, $bestellingId)
         if ($naam === '') {
             continue;
         }
-        $artikelen[] = [
-            'productnaam' => $naam,
-            'aantal' => $aantal,
-        ];
+
+        $key = mb_strtolower($naam, 'UTF-8');
+        if (!isset($samengevoegd[$key])) {
+            $samengevoegd[$key] = [
+                'productnaam' => $naam,
+                'aantal' => 0,
+            ];
+        }
+        $samengevoegd[$key]['aantal'] += $aantal;
     }
+
+    $artikelen = array_values($samengevoegd);
+    usort($artikelen, function ($a, $b) {
+        return strcmp((string) ($a['productnaam'] ?? ''), (string) ($b['productnaam'] ?? ''));
+    });
 
     return $artikelen;
 }
