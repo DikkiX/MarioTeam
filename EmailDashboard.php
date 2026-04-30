@@ -299,6 +299,63 @@ function refreshAccessToken($clientId, $clientSecret, $refreshToken)
     return ['ok' => true, 'data' => $data];
 }
 
+function bepaalBasisUrlVoorOAuth()
+{
+    $host = isset($_SERVER['HTTP_HOST']) ? (string) $_SERVER['HTTP_HOST'] : '';
+    $host = trim($host);
+    if ($host === '') {
+        return null;
+    }
+
+    $isHttps = false;
+    if (!empty($_SERVER['HTTPS']) && (string) $_SERVER['HTTPS'] !== 'off') {
+        $isHttps = true;
+    }
+    if (isset($_SERVER['SERVER_PORT']) && (string) $_SERVER['SERVER_PORT'] === '443') {
+        $isHttps = true;
+    }
+
+    $scheme = $isHttps ? 'https' : 'http';
+    return $scheme . '://' . $host;
+}
+
+function maakGoogleAuthUrl()
+{
+    $clientId = getProjectEnvValue('GOOGLE_OAUTH_CLIENT_ID');
+    if ($clientId === null || $clientId === '') {
+        return null;
+    }
+
+    $basis = bepaalBasisUrlVoorOAuth();
+    if ($basis === null) {
+        return null;
+    }
+
+    $redirectUri = $basis . '/api/google/oauth/callback';
+    $scopes = [
+        'https://www.googleapis.com/auth/gmail.modify',
+        'https://www.googleapis.com/auth/gmail.send',
+    ];
+
+    $params = [
+        'client_id' => (string) $clientId,
+        'redirect_uri' => $redirectUri,
+        'response_type' => 'code',
+        'scope' => implode(' ', $scopes),
+        'access_type' => 'offline',
+        'prompt' => 'consent',
+        'include_granted_scopes' => 'true',
+    ];
+
+    return 'https://accounts.google.com/o/oauth2/v2/auth?' . http_build_query($params, '', '&', PHP_QUERY_RFC3986);
+}
+
+function isGmailTokenIngetrokkenFout($errorTekst)
+{
+    $t = strtolower((string) $errorTekst);
+    return strpos($t, 'expired or revoked') !== false || strpos($t, 'invalid_grant') !== false;
+}
+
 function haalGmailAccessTokenOp()
 {
     // Dit regelt een geldig access_token (inclusief refresh als nodig).
@@ -315,7 +372,11 @@ function haalGmailAccessTokenOp()
 
     $tokenFile = leesTokenBestandVoorHost($host);
     if ($tokenFile === null) {
-        return ['ok' => false, 'error' => 'Geen tokenbestand gevonden. Doe eerst OAuth via /api/google/oauth/callback.'];
+        $authUrl = maakGoogleAuthUrl();
+        if (is_string($authUrl) && $authUrl !== '') {
+            return ['ok' => false, 'error' => 'Gmail is nog niet gekoppeld. <a href="' . e($authUrl) . '">Koppel Google opnieuw</a>.'];
+        }
+        return ['ok' => false, 'error' => 'Gmail is nog niet gekoppeld.'];
     }
 
     $payload = laadTokenPayload($tokenFile);
@@ -342,6 +403,14 @@ function haalGmailAccessTokenOp()
     $refresh = refreshAccessToken($clientId, $clientSecret, $refreshToken);
     if (empty($refresh['ok'])) {
         $err = isset($refresh['error']) ? (string) $refresh['error'] : 'Refresh mislukt.';
+        if (isGmailTokenIngetrokkenFout($err)) {
+            @unlink($tokenFile);
+            $authUrl = maakGoogleAuthUrl();
+            if (is_string($authUrl) && $authUrl !== '') {
+                return ['ok' => false, 'error' => 'Google token is verlopen of ingetrokken. <a href="' . e($authUrl) . '">Koppel Google opnieuw</a>.'];
+            }
+            return ['ok' => false, 'error' => 'Google token is verlopen of ingetrokken.'];
+        }
         return ['ok' => false, 'error' => $err];
     }
 
