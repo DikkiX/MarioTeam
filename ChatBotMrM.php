@@ -1,4 +1,5 @@
 <?php error_reporting(-1); //show errors
+header('X-Robots-Tag: noindex, nofollow', true);
 //overzicht
 //in create-page.php staat: include "/include/iframeChatbot.php";
 ///include/iframeChatbot.php maakt de iframe met ChatBotMrM.php erin
@@ -12,6 +13,7 @@
     <link href="https://fonts.googleapis.com/css?family=Josefin+Sans" rel="stylesheet">
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="robots" content="noindex, nofollow">
     <title>Chatbot Mr M</title>
     <style>
         /* Algemene styling */
