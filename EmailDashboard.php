@@ -350,6 +350,15 @@ function maakGoogleAuthUrl()
     return 'https://accounts.google.com/o/oauth2/v2/auth?' . http_build_query($params, '', '&', PHP_QUERY_RFC3986);
 }
 
+function maakGoogleKoppelKnopHtml($authUrl)
+{
+    $u = trim((string) $authUrl);
+    if ($u === '') {
+        return '';
+    }
+    return '<a href="' . e($u) . '" style="display:inline-block; padding:10px 14px; border-radius:10px; border:1px solid #3b82f6; background:#60a5fa; color:#111827; font-weight:800; text-decoration:none;">Koppel Google opnieuw</a>';
+}
+
 function isGmailTokenIngetrokkenFout($errorTekst)
 {
     $t = strtolower((string) $errorTekst);
@@ -374,7 +383,7 @@ function haalGmailAccessTokenOp()
     if ($tokenFile === null) {
         $authUrl = maakGoogleAuthUrl();
         if (is_string($authUrl) && $authUrl !== '') {
-            return ['ok' => false, 'error' => 'Gmail is nog niet gekoppeld. <a href="' . e($authUrl) . '">Koppel Google opnieuw</a>.'];
+            return ['ok' => false, 'error' => 'Gmail is nog niet gekoppeld.', 'reauth_url' => $authUrl];
         }
         return ['ok' => false, 'error' => 'Gmail is nog niet gekoppeld.'];
     }
@@ -397,7 +406,11 @@ function haalGmailAccessTokenOp()
     }
 
     if ($refreshToken === '') {
-        return ['ok' => false, 'error' => 'Token is verlopen en refresh_token ontbreekt. Doe OAuth opnieuw met access_type=offline & prompt=consent.'];
+        $authUrl = maakGoogleAuthUrl();
+        if (is_string($authUrl) && $authUrl !== '') {
+            return ['ok' => false, 'error' => 'Token is verlopen en refresh_token ontbreekt.', 'reauth_url' => $authUrl];
+        }
+        return ['ok' => false, 'error' => 'Token is verlopen en refresh_token ontbreekt.'];
     }
 
     $refresh = refreshAccessToken($clientId, $clientSecret, $refreshToken);
@@ -407,7 +420,7 @@ function haalGmailAccessTokenOp()
             @unlink($tokenFile);
             $authUrl = maakGoogleAuthUrl();
             if (is_string($authUrl) && $authUrl !== '') {
-                return ['ok' => false, 'error' => 'Google token is verlopen of ingetrokken. <a href="' . e($authUrl) . '">Koppel Google opnieuw</a>.'];
+                return ['ok' => false, 'error' => 'Google token is verlopen of ingetrokken.', 'reauth_url' => $authUrl];
             }
             return ['ok' => false, 'error' => 'Google token is verlopen of ingetrokken.'];
         }
@@ -1140,7 +1153,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $token = haalGmailAccessTokenOp();
                 if (empty($token['ok'])) {
                     $meldingType = 'error';
-                    $melding = isset($token['error']) ? (string) $token['error'] : 'Geen Gmail token.';
+                    $errTekst = isset($token['error']) ? (string) $token['error'] : 'Geen Gmail token.';
+                    $authUrl = isset($token['reauth_url']) ? (string) $token['reauth_url'] : '';
+                    if ($authUrl !== '') {
+                        $melding = [
+                            'html' => '<div style="display:flex; flex-wrap:wrap; gap:10px; align-items:center; justify-content:space-between;"><div>' . e($errTekst) . '</div>' . maakGoogleKoppelKnopHtml($authUrl) . '</div>',
+                        ];
+                    } else {
+                        $melding = $errTekst;
+                    }
                 } else {
                     $accessToken = (string) $token['access_token'];
                     $threadId = (string) $concept['gmail_thread_id'];
@@ -1211,7 +1232,11 @@ $csrf = csrfToken();
 function renderLayout($titel, $contentHtml, $melding, $meldingType)
 {
     $msgHtml = '';
-    if (is_string($melding) && $melding !== '') {
+    if (is_array($melding) && isset($melding['html']) && is_string($melding['html']) && $melding['html'] !== '') {
+        $bg = $meldingType === 'error' ? '#fee2e2' : '#dcfce7';
+        $bd = $meldingType === 'error' ? '#ef4444' : '#22c55e';
+        $msgHtml = '<div style="background:' . $bg . '; border:1px solid ' . $bd . '; padding:10px 12px; border-radius:10px; margin:12px 0;">' . $melding['html'] . '</div>';
+    } elseif (is_string($melding) && $melding !== '') {
         $bg = $meldingType === 'error' ? '#fee2e2' : '#dcfce7';
         $bd = $meldingType === 'error' ? '#ef4444' : '#22c55e';
         $msgHtml = '<div style="background:' . $bg . '; border:1px solid ' . $bd . '; padding:10px 12px; border-radius:10px; margin:12px 0;">' . e($melding) . '</div>';
@@ -1499,7 +1524,15 @@ if ($magSync) {
             }
         }
     } else {
-        $syncFout = isset($token['error']) ? (string) $token['error'] : 'Gmail token ontbreekt.';
+        $errTekst = isset($token['error']) ? (string) $token['error'] : 'Gmail token ontbreekt.';
+        $authUrl = isset($token['reauth_url']) ? (string) $token['reauth_url'] : '';
+        if ($authUrl !== '') {
+            $syncFout = [
+                'html' => '<div style="display:flex; flex-wrap:wrap; gap:10px; align-items:center; justify-content:space-between;"><div>' . e($errTekst) . '</div>' . maakGoogleKoppelKnopHtml($authUrl) . '</div>',
+            ];
+        } else {
+            $syncFout = $errTekst;
+        }
     }
 }
 
@@ -1508,6 +1541,10 @@ if ($heeftNetGesynct && (!is_string($melding) || $melding === '')) {
     $melding = 'Nieuwe ongelezen mails zijn toegevoegd als concept.';
 }
 if (is_string($syncFout) && $syncFout !== '' && (!is_string($melding) || $melding === '')) {
+    $meldingType = 'error';
+    $melding = $syncFout;
+}
+if (is_array($syncFout) && (!is_string($melding) || $melding === '')) {
     $meldingType = 'error';
     $melding = $syncFout;
 }
