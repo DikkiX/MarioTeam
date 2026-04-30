@@ -4,6 +4,12 @@ include_once $_SERVER['DOCUMENT_ROOT'] . '/include/env.php';
 
 session_start();
 
+// Dit bestand is het complete e-mail dashboard:
+// - Login + CSRF
+// - Gmail OAuth token lezen/refreshen
+// - Ongelezen mails ophalen en AI-concepten aanmaken
+// - Drafts bekijken/bewerken/versturen
+
 function stuurHtml($httpStatus, $html)
 {
     // Dit dashboard draait als webpagina, daarom sturen we HTML terug.
@@ -40,6 +46,7 @@ function vereisCsrf()
 
 function renderLoginPagina($melding = '')
 {
+    // Simpele login-pagina voor medewerkers.
     $csrf = csrfToken();
     $msgHtml = '';
     if (is_string($melding) && $melding !== '') {
@@ -139,6 +146,7 @@ function bepaalStorageGoogleDir()
 
 function normaliseerHostVoorBestand($host)
 {
+    // Tokenbestanden zijn per host opgeslagen, dus we normaliseren www/poort.
     $host = strtolower(trim((string) $host));
     if ($host === '') {
         return '';
@@ -158,6 +166,7 @@ function normaliseerHostVoorBestand($host)
 
 function lijstTokenBestandenInDir($storageDir)
 {
+    // Voor debug en fallback: welke tokenbestanden bestaan er?
     if (!is_string($storageDir) || $storageDir === '' || !is_dir($storageDir)) {
         return [];
     }
@@ -221,6 +230,7 @@ function leesTokenBestandVoorHost($host)
 
 function laadTokenPayload($tokenFilePath)
 {
+    // Leest het tokenbestand (JSON) van de schijf.
     $raw = @file_get_contents($tokenFilePath);
     if (!is_string($raw) || trim($raw) === '') {
         return null;
@@ -234,6 +244,7 @@ function laadTokenPayload($tokenFilePath)
 
 function slaTokenPayloadOp($tokenFilePath, $payload)
 {
+    // Slaat het (ververste) token terug op in hetzelfde bestand.
     $json = json_encode($payload, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
     if (!is_string($json)) {
         return false;
@@ -248,6 +259,7 @@ function slaTokenPayloadOp($tokenFilePath, $payload)
 
 function tokenIsVerlopen($payload)
 {
+    // Access tokens verlopen snel, dus we gebruiken saved_at + expires_in.
     if (!is_array($payload) || !isset($payload['saved_at']) || !isset($payload['token']) || !is_array($payload['token'])) {
         return true;
     }
@@ -264,6 +276,7 @@ function tokenIsVerlopen($payload)
 
 function refreshAccessToken($clientId, $clientSecret, $refreshToken)
 {
+    // Refresh via Google token endpoint: refresh_token -> nieuw access_token.
     $postData = http_build_query([
         'client_id' => $clientId,
         'client_secret' => $clientSecret,
@@ -301,6 +314,7 @@ function refreshAccessToken($clientId, $clientSecret, $refreshToken)
 
 function bepaalBasisUrlVoorOAuth()
 {
+    // We bouwen hier de basis URL voor de redirect_uri (http/https + host).
     $host = isset($_SERVER['HTTP_HOST']) ? (string) $_SERVER['HTTP_HOST'] : '';
     $host = trim($host);
     if ($host === '') {
@@ -321,6 +335,7 @@ function bepaalBasisUrlVoorOAuth()
 
 function maakGoogleAuthUrl()
 {
+    // URL om de Google OAuth flow te starten (offline + consent voor refresh_token).
     $clientId = getProjectEnvValue('GOOGLE_OAUTH_CLIENT_ID');
     if ($clientId === null || $clientId === '') {
         return null;
@@ -352,6 +367,7 @@ function maakGoogleAuthUrl()
 
 function maakGoogleKoppelKnopHtml($authUrl)
 {
+    // Kleine helper: in de foutmelding tonen we een echte knop, geen losse link.
     $u = trim((string) $authUrl);
     if ($u === '') {
         return '';
@@ -361,6 +377,7 @@ function maakGoogleKoppelKnopHtml($authUrl)
 
 function isGmailTokenIngetrokkenFout($errorTekst)
 {
+    // Google stuurt bij ingetrokken/verlopen refresh tokens vaak "invalid_grant".
     $t = strtolower((string) $errorTekst);
     return strpos($t, 'expired or revoked') !== false || strpos($t, 'invalid_grant') !== false;
 }
@@ -381,6 +398,7 @@ function haalGmailAccessTokenOp()
 
     $tokenFile = leesTokenBestandVoorHost($host);
     if ($tokenFile === null) {
+        // Geen tokenbestand: eerst koppelen via Google OAuth.
         $authUrl = maakGoogleAuthUrl();
         if (is_string($authUrl) && $authUrl !== '') {
             return ['ok' => false, 'error' => 'Gmail is nog niet gekoppeld.', 'reauth_url' => $authUrl];
@@ -406,6 +424,7 @@ function haalGmailAccessTokenOp()
     }
 
     if ($refreshToken === '') {
+        // Zonder refresh_token kunnen we niet automatisch vernieuwen.
         $authUrl = maakGoogleAuthUrl();
         if (is_string($authUrl) && $authUrl !== '') {
             return ['ok' => false, 'error' => 'Token is verlopen en refresh_token ontbreekt.', 'reauth_url' => $authUrl];
@@ -415,6 +434,7 @@ function haalGmailAccessTokenOp()
 
     $refresh = refreshAccessToken($clientId, $clientSecret, $refreshToken);
     if (empty($refresh['ok'])) {
+        // Bij "invalid_grant" moeten we opnieuw koppelen (oude token is waardeloos).
         $err = isset($refresh['error']) ? (string) $refresh['error'] : 'Refresh mislukt.';
         if (isGmailTokenIngetrokkenFout($err)) {
             @unlink($tokenFile);
@@ -1231,6 +1251,7 @@ $csrf = csrfToken();
 
 function renderLayout($titel, $contentHtml, $melding, $meldingType)
 {
+    // Centrale layout (bovenbalk + melding + content).
     $msgHtml = '';
     if (is_array($melding) && isset($melding['html']) && is_string($melding['html']) && $melding['html'] !== '') {
         $bg = $meldingType === 'error' ? '#fee2e2' : '#dcfce7';
