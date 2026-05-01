@@ -708,6 +708,64 @@ function parseerEmailAdresUitFromHeader($fromHeader)
     return '';
 }
 
+function parseerEmailAdressenUitHeaderTekst($headerTekst)
+{
+    $t = trim((string) $headerTekst);
+    if ($t === '') {
+        return [];
+    }
+
+    $result = [];
+    if (preg_match_all('/[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}/i', $t, $matches) > 0) {
+        $found = $matches[0] ?? [];
+        if (is_array($found)) {
+            foreach ($found as $m) {
+                $candidate = strtolower(trim((string) $m));
+                if ($candidate !== '' && filter_var($candidate, FILTER_VALIDATE_EMAIL)) {
+                    $result[] = $candidate;
+                }
+            }
+        }
+    } else {
+        $single = parseerEmailAdresUitFromHeader($t);
+        if ($single !== '') {
+            $result[] = strtolower($single);
+        }
+    }
+
+    return array_values(array_unique($result));
+}
+
+function tabelHeeftKolom($conn, $table, $kolom)
+{
+    $table = trim((string) $table);
+    $kolom = trim((string) $kolom);
+    if ($table === '' || $kolom === '') {
+        return false;
+    }
+
+    try {
+        $stmt = $conn->prepare("SHOW COLUMNS FROM `$table` LIKE :c");
+        $stmt->execute([':c' => $kolom]);
+        return (bool) $stmt->fetch();
+    } catch (Throwable) {
+        return false;
+    }
+}
+
+function zorgEmailConceptenAliasKolommen($conn)
+{
+    try {
+        if (!tabelHeeftKolom($conn, 'email_concepten', 'ontvangen_op_email')) {
+            $conn->exec("ALTER TABLE email_concepten ADD COLUMN ontvangen_op_email VARCHAR(255) NULL AFTER klant_email");
+        }
+        if (!tabelHeeftKolom($conn, 'email_concepten', 'afzender_alias_email')) {
+            $conn->exec("ALTER TABLE email_concepten ADD COLUMN afzender_alias_email VARCHAR(255) NULL AFTER ontvangen_op_email");
+        }
+    } catch (Throwable) {
+    }
+}
+
 function bestaatEmailConceptVoorThread($conn, $threadId)
 {
     // Zo maken we geen dubbele concepten voor dezelfde thread.
@@ -725,18 +783,47 @@ function bestaatEmailConceptVoorThread($conn, $threadId)
     return (bool) $stmt->fetch();
 }
 
-function voegEmailConceptToe($conn, $threadId, $klantEmail, $conceptTekst)
+function voegEmailConceptToe($conn, $threadId, $klantEmail, $conceptTekst, $ontvangenOpEmail = '', $afzenderAliasEmail = '')
 {
     // Dit slaat het concept op als draft.
-    $stmt = $conn->prepare("
-        INSERT INTO email_concepten (gmail_thread_id, klant_email, concept_tekst, status)
-        VALUES (:thread_id, :klant_email, :concept_tekst, 'draft')
-    ");
-    $stmt->execute([
-        ':thread_id' => (string) $threadId,
-        ':klant_email' => (string) $klantEmail,
-        ':concept_tekst' => (string) $conceptTekst,
-    ]);
+    zorgEmailConceptenAliasKolommen($conn);
+    $heeftOntvangen = tabelHeeftKolom($conn, 'email_concepten', 'ontvangen_op_email');
+    $heeftAfzender = tabelHeeftKolom($conn, 'email_concepten', 'afzender_alias_email');
+
+    if ($heeftOntvangen && $heeftAfzender) {
+        $stmt = $conn->prepare("
+            INSERT INTO email_concepten (gmail_thread_id, klant_email, ontvangen_op_email, afzender_alias_email, concept_tekst, status)
+            VALUES (:thread_id, :klant_email, :ontvangen, :afzender, :concept_tekst, 'draft')
+        ");
+        $stmt->execute([
+            ':thread_id' => (string) $threadId,
+            ':klant_email' => (string) $klantEmail,
+            ':ontvangen' => (string) $ontvangenOpEmail,
+            ':afzender' => (string) $afzenderAliasEmail,
+            ':concept_tekst' => (string) $conceptTekst,
+        ]);
+    } elseif ($heeftOntvangen) {
+        $stmt = $conn->prepare("
+            INSERT INTO email_concepten (gmail_thread_id, klant_email, ontvangen_op_email, concept_tekst, status)
+            VALUES (:thread_id, :klant_email, :ontvangen, :concept_tekst, 'draft')
+        ");
+        $stmt->execute([
+            ':thread_id' => (string) $threadId,
+            ':klant_email' => (string) $klantEmail,
+            ':ontvangen' => (string) $ontvangenOpEmail,
+            ':concept_tekst' => (string) $conceptTekst,
+        ]);
+    } else {
+        $stmt = $conn->prepare("
+            INSERT INTO email_concepten (gmail_thread_id, klant_email, concept_tekst, status)
+            VALUES (:thread_id, :klant_email, :concept_tekst, 'draft')
+        ");
+        $stmt->execute([
+            ':thread_id' => (string) $threadId,
+            ':klant_email' => (string) $klantEmail,
+            ':concept_tekst' => (string) $conceptTekst,
+        ]);
+    }
 
     return (int) $conn->lastInsertId();
 }
@@ -815,10 +902,13 @@ function roepOpenAiAanVoorEmailConcept($onderwerp, $klantTekst, $extraInstructie
     return ['ok' => true, 'content' => $content];
 }
 
-function bouwRfc2822Bericht($toEmail, $subject, $bodyText, $inReplyTo = null, $references = null)
+function bouwRfc2822Bericht($toEmail, $subject, $bodyText, $inReplyTo = null, $references = null, $fromHeader = null)
 {
     // Gmail API verwacht het bericht als RFC2822 in base64url (raw).
     $headers = [];
+    if (is_string($fromHeader) && trim($fromHeader) !== '') {
+        $headers[] = 'From: ' . trim($fromHeader);
+    }
     $headers[] = 'To: ' . $toEmail;
     $headers[] = 'Subject: ' . $subject;
     $headers[] = 'MIME-Version: 1.0';
@@ -974,6 +1064,186 @@ function verwerkEmailRulesVoorMail($rules, $fromHeader, $subject)
         'ignore' => $ignore,
         'extra_instructies' => implode("\n\n", $extra),
     ];
+}
+
+function zorgEmailAliassenTabel($conn)
+{
+    $conn->exec("
+        CREATE TABLE IF NOT EXISTS `email_aliassen` (
+            `send_as_email` VARCHAR(255) NOT NULL,
+            `display_name` VARCHAR(255) NOT NULL DEFAULT '',
+            `is_primary` TINYINT(1) NOT NULL DEFAULT 0,
+            `is_default` TINYINT(1) NOT NULL DEFAULT 0,
+            `is_enabled` TINYINT(1) NOT NULL DEFAULT 1,
+            `updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            PRIMARY KEY (`send_as_email`),
+            INDEX (`is_enabled`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    ");
+}
+
+function haalEmailAliassen($conn)
+{
+    zorgEmailAliassenTabel($conn);
+    $stmt = $conn->prepare("
+        SELECT send_as_email, display_name, is_primary, is_default, is_enabled, updated_at
+        FROM email_aliassen
+        ORDER BY is_default DESC, is_primary DESC, send_as_email ASC
+    ");
+    $stmt->execute();
+    $rows = $stmt->fetchAll();
+    return is_array($rows) ? $rows : [];
+}
+
+function haalActieveEmailAliassen($conn)
+{
+    zorgEmailAliassenTabel($conn);
+    $stmt = $conn->prepare("
+        SELECT send_as_email, display_name, is_primary, is_default
+        FROM email_aliassen
+        WHERE is_enabled = 1
+        ORDER BY is_default DESC, is_primary DESC, send_as_email ASC
+    ");
+    $stmt->execute();
+    $rows = $stmt->fetchAll();
+    return is_array($rows) ? $rows : [];
+}
+
+function upsertEmailAliassenVanGmail($conn, $sendAsArray)
+{
+    zorgEmailAliassenTabel($conn);
+    if (!is_array($sendAsArray)) {
+        return 0;
+    }
+
+    $count = 0;
+    foreach ($sendAsArray as $row) {
+        if (!is_array($row)) {
+            continue;
+        }
+        $email = isset($row['sendAsEmail']) ? strtolower(trim((string) $row['sendAsEmail'])) : '';
+        if ($email === '' || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
+            continue;
+        }
+        $display = isset($row['displayName']) ? trim((string) $row['displayName']) : '';
+        $isPrimary = !empty($row['isPrimary']) ? 1 : 0;
+        $isDefault = !empty($row['isDefault']) ? 1 : 0;
+
+        $stmt = $conn->prepare("
+            INSERT INTO email_aliassen (send_as_email, display_name, is_primary, is_default, is_enabled)
+            VALUES (:email, :display, :is_primary, :is_default, 1)
+            ON DUPLICATE KEY UPDATE
+                display_name = VALUES(display_name),
+                is_primary = VALUES(is_primary),
+                is_default = VALUES(is_default)
+        ");
+        $stmt->execute([
+            ':email' => $email,
+            ':display' => $display,
+            ':is_primary' => $isPrimary,
+            ':is_default' => $isDefault,
+        ]);
+        $count++;
+    }
+
+    return $count;
+}
+
+function slaEmailAliassenActiefOp($conn, $enabledMap)
+{
+    zorgEmailAliassenTabel($conn);
+    if (!is_array($enabledMap)) {
+        $enabledMap = [];
+    }
+
+    $rows = haalEmailAliassen($conn);
+    foreach ($rows as $r) {
+        $email = isset($r['send_as_email']) ? (string) $r['send_as_email'] : '';
+        if ($email === '') {
+            continue;
+        }
+        $enabled = isset($enabledMap[$email]) ? 1 : 0;
+        $stmt = $conn->prepare("UPDATE email_aliassen SET is_enabled = :en WHERE send_as_email = :email");
+        $stmt->execute([
+            ':en' => $enabled,
+            ':email' => $email,
+        ]);
+    }
+}
+
+function haalOntvangerEmailUitMailHeaders($headers)
+{
+    if (!is_array($headers)) {
+        return '';
+    }
+
+    $kandidaten = ['Delivered-To', 'X-Original-To', 'To', 'Cc', 'Bcc'];
+    foreach ($kandidaten as $naam) {
+        $v = haalHeaderOp($headers, $naam);
+        if (!is_string($v) || trim($v) === '') {
+            continue;
+        }
+        $emails = parseerEmailAdressenUitHeaderTekst($v);
+        if (!empty($emails)) {
+            return (string) $emails[0];
+        }
+    }
+
+    return '';
+}
+
+function bepaalAfzenderAliasVoorOntvanger($conn, $ontvangerEmail)
+{
+    $ontvangerEmail = strtolower(trim((string) $ontvangerEmail));
+    if ($ontvangerEmail !== '' && filter_var($ontvangerEmail, FILTER_VALIDATE_EMAIL)) {
+        try {
+            zorgEmailAliassenTabel($conn);
+            $stmt = $conn->prepare("
+                SELECT send_as_email
+                FROM email_aliassen
+                WHERE send_as_email = :email AND is_enabled = 1
+                LIMIT 1
+            ");
+            $stmt->execute([':email' => $ontvangerEmail]);
+            $row = $stmt->fetch();
+            if (is_array($row) && isset($row['send_as_email']) && (string) $row['send_as_email'] !== '') {
+                return (string) $row['send_as_email'];
+            }
+        } catch (Throwable) {
+        }
+    }
+
+    try {
+        $actief = haalActieveEmailAliassen($conn);
+        if (is_array($actief) && !empty($actief)) {
+            $first = $actief[0];
+            return isset($first['send_as_email']) ? (string) $first['send_as_email'] : '';
+        }
+    } catch (Throwable) {
+    }
+
+    return '';
+}
+
+function bouwFromHeaderVoorAlias($conn, $aliasEmail)
+{
+    $aliasEmail = strtolower(trim((string) $aliasEmail));
+    if ($aliasEmail === '' || !filter_var($aliasEmail, FILTER_VALIDATE_EMAIL)) {
+        return '';
+    }
+    try {
+        zorgEmailAliassenTabel($conn);
+        $stmt = $conn->prepare("SELECT display_name FROM email_aliassen WHERE send_as_email = :e LIMIT 1");
+        $stmt->execute([':e' => $aliasEmail]);
+        $row = $stmt->fetch();
+        $display = is_array($row) && isset($row['display_name']) ? trim((string) $row['display_name']) : '';
+        if ($display !== '') {
+            $displaySafe = str_replace(['"', "\r", "\n"], ['', '', ''], $display);
+            return $displaySafe . ' <' . $aliasEmail . '>';
+        }
+    } catch (Throwable) {
+    }
+    return $aliasEmail;
 }
 
 vereisDashboardLogin();
@@ -1133,6 +1403,71 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         header('Location: /EmailDashboard.php?settings=1&tab=rules', true, 303);
         exit;
     }
+    if ($actie === 'sync_aliases') {
+        $token = haalGmailAccessTokenOp();
+        if (empty($token['ok'])) {
+            $_SESSION['email_dashboard_flash'] = [
+                'type' => 'error',
+                'melding' => 'Gmail is niet gekoppeld. Koppel Google opnieuw en probeer het opnieuw.',
+            ];
+            header('Location: /EmailDashboard.php?settings=1&tab=aliases', true, 303);
+            exit;
+        }
+
+        $accessToken = (string) $token['access_token'];
+        $resp = gmailApiRequest('GET', 'users/me/settings/sendAs', $accessToken);
+        if (empty($resp['ok'])) {
+            $_SESSION['email_dashboard_flash'] = [
+                'type' => 'error',
+                'melding' => isset($resp['error']) ? (string) $resp['error'] : 'Aliassen ophalen via Gmail API is mislukt.',
+            ];
+            header('Location: /EmailDashboard.php?settings=1&tab=aliases', true, 303);
+            exit;
+        }
+
+        $sendAs = $resp['data']['sendAs'] ?? [];
+        try {
+            $aantal = upsertEmailAliassenVanGmail($conn, $sendAs);
+            $_SESSION['email_dashboard_flash'] = [
+                'type' => 'ok',
+                'melding' => 'Aliassen gesynchroniseerd (' . (string) $aantal . ').',
+            ];
+        } catch (Throwable) {
+            $_SESSION['email_dashboard_flash'] = [
+                'type' => 'error',
+                'melding' => 'Aliassen opslaan in de database is mislukt.',
+            ];
+        }
+
+        header('Location: /EmailDashboard.php?settings=1&tab=aliases', true, 303);
+        exit;
+    }
+    if ($actie === 'save_aliases') {
+        $enabled = isset($_POST['alias_enabled']) && is_array($_POST['alias_enabled']) ? $_POST['alias_enabled'] : [];
+        $enabledMap = [];
+        foreach ($enabled as $k => $v) {
+            $email = strtolower(trim((string) $k));
+            if ($email !== '' && filter_var($email, FILTER_VALIDATE_EMAIL)) {
+                $enabledMap[$email] = true;
+            }
+        }
+
+        try {
+            slaEmailAliassenActiefOp($conn, $enabledMap);
+            $_SESSION['email_dashboard_flash'] = [
+                'type' => 'ok',
+                'melding' => 'Aliassen zijn opgeslagen.',
+            ];
+        } catch (Throwable) {
+            $_SESSION['email_dashboard_flash'] = [
+                'type' => 'error',
+                'melding' => 'Opslaan is mislukt.',
+            ];
+        }
+
+        header('Location: /EmailDashboard.php?settings=1&tab=aliases', true, 303);
+        exit;
+    }
     if ($actie === 'delete') {
         // Verwijderen betekent: uit de draft-lijst halen.
         $conceptId = isset($_POST['id']) ? (int) $_POST['id'] : 0;
@@ -1159,7 +1494,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $meldingType = 'error';
             $melding = 'id en concept_tekst zijn verplicht.';
         } else {
-            $stmt = $conn->prepare("SELECT id, gmail_thread_id, klant_email, concept_tekst, status FROM email_concepten WHERE id = :id LIMIT 1");
+            zorgEmailConceptenAliasKolommen($conn);
+            $stmt = $conn->prepare("SELECT id, gmail_thread_id, klant_email, concept_tekst, status, ontvangen_op_email, afzender_alias_email FROM email_concepten WHERE id = :id LIMIT 1");
             $stmt->execute([':id' => $conceptId]);
             $concept = $stmt->fetch();
 
@@ -1216,7 +1552,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         }
                     }
 
-                    $raw = bouwRfc2822Bericht($toEmail, $subject, $nieuweTekst, $inReplyTo, $references);
+                    $ontvangenOp = isset($concept['ontvangen_op_email']) ? (string) $concept['ontvangen_op_email'] : '';
+                    $conceptAlias = isset($concept['afzender_alias_email']) ? (string) $concept['afzender_alias_email'] : '';
+                    $gekozenAlias = bepaalAfzenderAliasVoorOntvanger($conn, $conceptAlias !== '' ? $conceptAlias : $ontvangenOp);
+                    $fromHeader = bouwFromHeaderVoorAlias($conn, $gekozenAlias);
+                    $raw = bouwRfc2822Bericht($toEmail, $subject, $nieuweTekst, $inReplyTo, $references, $fromHeader);
                     $send = gmailApiRequest('POST', 'users/me/messages/send', $accessToken, [
                         'raw' => $raw,
                         'threadId' => $threadId,
@@ -1283,6 +1623,7 @@ if ($settings) {
     // Instellingenpagina met een zijmenu (hier komen later meerdere items).
     $activeTone = ($settingsTab === 'tone');
     $activeRules = ($settingsTab === 'rules');
+    $activeAliases = ($settingsTab === 'aliases');
     $toneValue = '';
     try {
         $toneValue = haalDashboardSetting($conn, 'tone_of_voice');
@@ -1296,6 +1637,8 @@ if ($settings) {
     $menu .= '<a href="/EmailDashboard.php?settings=1&amp;tab=tone" style="display:block; padding:10px 12px; border-radius:10px; text-decoration:none; border:1px solid ' . ($activeTone ? '#60a5fa' : '#9ca3af') . '; background:' . ($activeTone ? '#bfdbfe' : '#e5e7eb') . '; color:#111827; font-weight:800;">Tone of voice</a>';
     $menu .= '<div style="height:10px;"></div>';
     $menu .= '<a href="/EmailDashboard.php?settings=1&amp;tab=rules" style="display:block; padding:10px 12px; border-radius:10px; text-decoration:none; border:1px solid ' . ($activeRules ? '#60a5fa' : '#9ca3af') . '; background:' . ($activeRules ? '#bfdbfe' : '#e5e7eb') . '; color:#111827; font-weight:800;">Regels &amp; filters</a>';
+    $menu .= '<div style="height:10px;"></div>';
+    $menu .= '<a href="/EmailDashboard.php?settings=1&amp;tab=aliases" style="display:block; padding:10px 12px; border-radius:10px; text-decoration:none; border:1px solid ' . ($activeAliases ? '#60a5fa' : '#9ca3af') . '; background:' . ($activeAliases ? '#bfdbfe' : '#e5e7eb') . '; color:#111827; font-weight:800;">E-mail aliassen</a>';
     $menu .= '</div></div>';
 
     $content = '<div style="background:#f3f4f6; border:1px solid #9ca3af; border-radius:14px; padding:14px 16px;">';
@@ -1437,6 +1780,64 @@ if ($settings) {
             }
             $content .= '</div>';
         }
+    } elseif ($activeAliases) {
+        $aliassen = [];
+        try {
+            $aliassen = haalEmailAliassen($conn);
+        } catch (Throwable) {
+            $aliassen = [];
+        }
+
+        $content .= '<div style="font-weight:800; margin-bottom:8px;">E-mail aliassen</div>';
+        $content .= '<div style="color:#6b7280; margin-bottom:12px;">Deze aliassen komen uit Gmail (Send mail as). Zet aan welke adressen de AI mag gebruiken.</div>';
+
+        $content .= '<div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:12px;">';
+        $content .= '<form method="post" action="/EmailDashboard.php?settings=1&amp;tab=aliases" style="margin:0;">';
+        $content .= '<input type="hidden" name="csrf" value="' . e($csrf) . '">';
+        $content .= '<input type="hidden" name="actie" value="sync_aliases">';
+        $content .= '<button type="submit" style="background:#e5e7eb; border:1px solid #9ca3af; color:#111827; font-weight:800; padding:10px 14px; border-radius:10px; cursor:pointer;">Synchroniseer aliassen</button>';
+        $content .= '</form>';
+        $content .= '</div>';
+
+        if (!is_array($aliassen) || empty($aliassen)) {
+            $content .= '<div style="color:#6b7280;">Nog geen aliassen gevonden. Klik op “Synchroniseer aliassen”.</div>';
+        } else {
+            $content .= '<form method="post" action="/EmailDashboard.php?settings=1&amp;tab=aliases" style="margin:0;">';
+            $content .= '<input type="hidden" name="csrf" value="' . e($csrf) . '">';
+            $content .= '<input type="hidden" name="actie" value="save_aliases">';
+            $content .= '<div style="display:flex; flex-direction:column; gap:10px;">';
+            foreach ($aliassen as $a) {
+                $email = isset($a['send_as_email']) ? (string) $a['send_as_email'] : '';
+                $display = isset($a['display_name']) ? (string) $a['display_name'] : '';
+                $isEnabled = isset($a['is_enabled']) && (int) $a['is_enabled'] === 1;
+                $isPrimary = isset($a['is_primary']) && (int) $a['is_primary'] === 1;
+                $isDefault = isset($a['is_default']) && (int) $a['is_default'] === 1;
+
+                $labels = [];
+                if ($isDefault) {
+                    $labels[] = 'Default';
+                }
+                if ($isPrimary) {
+                    $labels[] = 'Primary';
+                }
+                $labelText = !empty($labels) ? (' • ' . implode(' • ', $labels)) : '';
+
+                $content .= '<label style="display:flex; gap:10px; align-items:center; background:#ffffff; border:1px solid #9ca3af; border-radius:12px; padding:12px 12px;">';
+                $content .= '<input type="checkbox" name="alias_enabled[' . e(strtolower($email)) . ']" value="1" ' . ($isEnabled ? 'checked' : '') . '>';
+                $content .= '<div style="flex:1 1 auto;">';
+                $content .= '<div style="font-weight:800;">' . e($email) . '<span style="color:#6b7280; font-weight:700;">' . e($labelText) . '</span></div>';
+                if (trim($display) !== '') {
+                    $content .= '<div style="color:#6b7280;">' . e($display) . '</div>';
+                }
+                $content .= '</div>';
+                $content .= '<div style="color:#6b7280;">' . ($isEnabled ? 'Actief' : 'Uit') . '</div>';
+                $content .= '</label>';
+            }
+            $content .= '</div>';
+            $content .= '<div style="display:flex; justify-content:flex-end; margin-top:12px;">';
+            $content .= '<button type="submit" style="background:#60a5fa; border:1px solid #3b82f6; color:#111827; font-weight:800; padding:10px 14px; border-radius:10px; cursor:pointer;">Opslaan</button>';
+            $content .= '</div></form>';
+        }
     } else {
         $content .= '<div style="font-weight:800; margin-bottom:8px;">Instellingen</div>';
         $content .= '<div style="color:#6b7280;">Kies links een onderdeel.</div>';
@@ -1458,6 +1859,21 @@ if ($magSync) {
     $token = haalGmailAccessTokenOp();
     if (!empty($token['ok'])) {
         $accessToken = (string) $token['access_token'];
+        $aliassen = [];
+        try {
+            $aliassen = haalEmailAliassen($conn);
+        } catch (Throwable) {
+            $aliassen = [];
+        }
+        $aliasEmails = [];
+        foreach ($aliassen as $a) {
+            if (is_array($a) && isset($a['send_as_email'])) {
+                $em = strtolower(trim((string) $a['send_as_email']));
+                if ($em !== '' && filter_var($em, FILTER_VALIDATE_EMAIL)) {
+                    $aliasEmails[$em] = true;
+                }
+            }
+        }
         $actieveRegels = [];
         try {
             $actieveRegels = haalActieveEmailRules($conn);
@@ -1493,6 +1909,12 @@ if ($magSync) {
                     $from = haalHeaderOp($headers, 'From') ?? '';
                     $subject = haalHeaderOp($headers, 'Subject') ?? '';
                     $klantEmail = parseerEmailAdresUitFromHeader($from);
+                    $ontvangerEmail = haalOntvangerEmailUitMailHeaders($headers);
+                    $ontvangerEmail = strtolower(trim((string) $ontvangerEmail));
+                    if ($ontvangerEmail !== '' && !isset($aliasEmails[$ontvangerEmail])) {
+                        $ontvangerEmail = '';
+                    }
+                    $afzenderAlias = bepaalAfzenderAliasVoorOntvanger($conn, $ontvangerEmail);
 
                     if ($threadId === '' || $klantEmail === '') {
                         continue;
@@ -1536,7 +1958,7 @@ if ($magSync) {
                         continue;
                     }
 
-                    voegEmailConceptToe($conn, $threadId, $klantEmail, $conceptTekst);
+                    voegEmailConceptToe($conn, $threadId, $klantEmail, $conceptTekst, $ontvangerEmail, $afzenderAlias);
                     gmailApiRequest('POST', 'users/me/messages/' . rawurlencode($msgId) . '/modify', $accessToken, [
                         'removeLabelIds' => ['UNREAD'],
                     ]);
