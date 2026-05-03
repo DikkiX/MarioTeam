@@ -1,6 +1,8 @@
 <?php
 include_once $_SERVER['DOCUMENT_ROOT'] . '/include/db.inc';
 
+// Dit endpoint slaat 1 chatbericht op en start daarna de worker.
+// De worker maakt het antwoord en zet dat later in de database.
 // We geven altijd JSON terug, zodat frontend of Postman dit netjes kan lezen.
 header('Content-Type: application/json; charset=utf-8');
 
@@ -13,6 +15,7 @@ function stuurJsonResponse($httpStatus, $data)
 
 function zorgDashboardSettingsTabel($conn)
 {
+    // Deze tabel bewaren we voor instellingen en secrets.
     $conn->exec("
         CREATE TABLE IF NOT EXISTS `dashboard_settings` (
             `setting_key` VARCHAR(64) NOT NULL,
@@ -51,6 +54,8 @@ function haalOfMaakWorkerSecret($conn)
 
 function triggerWorkerOpAchtergrond($berichtId)
 {
+    // Start de worker zonder te wachten op een antwoord.
+    // Dit houdt de chat snel, ook als OpenAI langer bezig is.
     $host = $_SERVER['SERVER_NAME'] ?? 'www.marioswitch1.nl';
     $host = preg_replace('/[^a-zA-Z0-9.\-]/', '', (string) $host);
     if (!is_string($host) || $host === '') {

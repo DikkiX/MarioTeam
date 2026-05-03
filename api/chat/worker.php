@@ -4,8 +4,11 @@ include_once $_SERVER['DOCUMENT_ROOT'] . '/include/db.inc';
 ignore_user_abort(true);
 set_time_limit(0);
 
+// Dit script verwerkt de chat-wachtrij.
+// Het pakt het oudste bericht, maakt een antwoord en slaat dat op in de database.
 function schrijfWorkerLog($message)
 {
+    // Logbestand voor testen en foutzoeken.
     $logMap = $_SERVER['DOCUMENT_ROOT'] . '/storage/logs';
     $logBestand = $logMap . '/chat_worker.log';
 
@@ -91,6 +94,7 @@ function haalOfMaakWorkerSecret($conn)
 // Zo kunnen we status en antwoord veilig opslaan.
 function updateChatQueueBericht($conn, $berichtId, $status, $aiResponse = null)
 {
+    // Werk status en antwoord bij voor 1 bericht in de wachtrij.
     $stmt = $conn->prepare("
         UPDATE chat_queue
         SET ai_response = :ai_response, status = :status
@@ -107,6 +111,7 @@ function updateChatQueueBericht($conn, $berichtId, $status, $aiResponse = null)
 // Zo kan het model live data opvragen in plaats van gokken.
 function bouwToolsVoorOpenAi()
 {
+    // Dit zijn functies die de AI mag gebruiken om live dingen op te zoeken.
     return [
         [
             'type' => 'function',
@@ -155,6 +160,7 @@ function bouwToolsVoorOpenAi()
 // Als bestelnummer en e-mail allebei in de tekst staan, kunnen we de functie afdwingen.
 function bepaalGeforceerdeToolChoice($berichtTekst)
 {
+    // Als er én een bestelnummer én een e-mail in de tekst staat, gaan we meteen zoeken.
     $heeftBestelWoord = preg_match('/bestelling|bestelnummer|order|status|inhoud|artikelen|orderregels|wat heb ik besteld|wat zit er/i', $berichtTekst) === 1;
     $heeftEmail = preg_match('/[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}/i', $berichtTekst) === 1;
     $heeftBestelnummer = preg_match('/\b\d{4,}\b/', $berichtTekst) === 1;
@@ -175,6 +181,7 @@ function bepaalGeforceerdeToolChoice($berichtTekst)
 // Als we tools meegeven, mag het model ook een functie aanroepen.
 function roepOpenAiAan($messages, $tools = [], $toolChoice = 'auto')
 {
+    // Vraag OpenAI om een antwoord. Soms vraagt OpenAI om extra info via een functie.
     global $conn;
     $apiKey = getProjectEnvValue('OPENAI_API_KEY');
 
@@ -1105,7 +1112,7 @@ function maakBerichtenVoorOpenAi($conn, $bericht)
 }
 
 // De worker draait via een interne trigger.
-// Als CHAT_WORKER_SECRET gezet is, blokkeren we alle requests zonder secret.
+// Zonder de juiste secret mag niemand dit endpoint gebruiken.
 $requiredSecret = getProjectEnvValue('CHAT_WORKER_SECRET');
 $requiredSecret = is_string($requiredSecret) ? trim($requiredSecret) : '';
 if ($requiredSecret === '') {
@@ -1159,7 +1166,7 @@ try {
 
     $actiefBerichtId = (int) $bericht['id'];
 
-    // Meteen op processing zetten voorkomt dubbele verwerking.
+    // Meteen op processing zetten voorkomt dat hetzelfde bericht twee keer gedaan wordt.
     $updateSql = "
         UPDATE chat_queue
         SET status = :nieuwe_status
@@ -1202,11 +1209,11 @@ try {
 
     $assistantMessage = $eersteAntwoord['choices'][0]['message'];
 
-    // Als OpenAI een functie wil gebruiken, voeren we die hier uit.
+    // Als OpenAI iets wil opzoeken, voeren we die functie hier uit.
     if (!empty($assistantMessage['tool_calls'])) {
         schrijfWorkerLog('OpenAI vroeg om een interne functie voor bericht ' . $bericht['id'] . '.');
 
-        // We bewaren eerst welke tool-call OpenAI wilde doen.
+        // We bewaren eerst het bericht van OpenAI, zodat het gesprek klopt.
         $messages[] = $assistantMessage;
 
         foreach ($assistantMessage['tool_calls'] as $toolCall) {
@@ -1223,7 +1230,7 @@ try {
             $len = is_string($resultJson) ? strlen($resultJson) : 0;
             schrijfWorkerLog('Functie-resultaat ontvangen (' . $len . ' bytes).');
 
-            // Hier geven we de ruwe database-uitkomst terug aan OpenAI.
+            // Hier geven we de gevonden data terug aan OpenAI.
             $messages[] = [
                 'role' => 'tool',
                 'tool_call_id' => $toolCall['id'],
@@ -1231,7 +1238,7 @@ try {
             ];
         }
 
-        // Nu geven we de ruwe data terug aan OpenAI voor het echte antwoord.
+        // Nu maakt OpenAI met die data het echte antwoord.
         $tweedeAntwoord = roepOpenAiAan($messages);
         $definitiefAntwoord = $tweedeAntwoord['choices'][0]['message']['content'] ?? '';
 
@@ -1240,7 +1247,7 @@ try {
             schrijfWorkerLog('Definitief AI-antwoord gemaakt voor bericht ' . $bericht['id'] . ' (lengte ' . strlen((string) $definitiefAntwoord) . ').');
         } else {
             updateChatQueueBericht($conn, $actiefBerichtId, 'error');
-            schrijfWorkerLog('Na function calling kwam er geen definitief antwoord terug.');
+            schrijfWorkerLog('Na het opzoeken kwam er geen definitief antwoord terug.');
             exit('Worker kon geen definitief AI-antwoord maken.');
         }
     } else {
@@ -1271,7 +1278,7 @@ try {
         }
     }
 
-    // We loggen hier wat er echt misging, zodat testen makkelijker wordt.
+    // We loggen wat er misging, zodat testen makkelijker wordt.
     schrijfWorkerLog('Worker fout: ' . $e->getMessage());
     http_response_code(500);
     exit('Worker kon de wachtrij niet verwerken.');
