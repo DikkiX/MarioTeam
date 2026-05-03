@@ -526,6 +526,7 @@ function base64UrlDecode($data)
 
 function haalHeaderOp($headers, $naam)
 {
+    // Gmail geeft headers als lijst met naam + waarde. Deze functie zoekt één header op.
     if (!is_array($headers)) {
         return null;
     }
@@ -694,7 +695,7 @@ function sanitizeEmailHtmlVoorDashboard($html)
 
 function parseerEmailAdresUitFromHeader($fromHeader)
 {
-    // We willen alleen het e-mailadres uit de From header.
+    // We willen alleen het e-mailadres uit de afzender-regel (From) halen.
     $fromHeader = trim((string) $fromHeader);
     if ($fromHeader === '') {
         return '';
@@ -710,6 +711,7 @@ function parseerEmailAdresUitFromHeader($fromHeader)
 
 function parseerEmailAdressenUitHeaderTekst($headerTekst)
 {
+    // Haal 1 of meerdere e-mailadressen uit een header-string (To/Cc/Delivered-To/etc).
     $t = trim((string) $headerTekst);
     if ($t === '') {
         return [];
@@ -738,6 +740,7 @@ function parseerEmailAdressenUitHeaderTekst($headerTekst)
 
 function tabelHeeftKolom($conn, $table, $kolom)
 {
+    // Check of een kolom bestaat, zodat we veilig iets kunnen toevoegen als dat nodig is.
     $table = trim((string) $table);
     $kolom = trim((string) $kolom);
     if ($table === '' || $kolom === '') {
@@ -755,7 +758,11 @@ function tabelHeeftKolom($conn, $table, $kolom)
 
 function zorgEmailConceptenAliasKolommen($conn)
 {
+    // Voeg extra kolommen toe als ze nog niet bestaan, zodat oude databases ook blijven werken.
     try {
+        if (!tabelHeeftKolom($conn, 'email_concepten', 'onderwerp')) {
+            $conn->exec("ALTER TABLE email_concepten ADD COLUMN onderwerp VARCHAR(255) NULL AFTER gmail_thread_id");
+        }
         if (!tabelHeeftKolom($conn, 'email_concepten', 'ontvangen_op_email')) {
             $conn->exec("ALTER TABLE email_concepten ADD COLUMN ontvangen_op_email VARCHAR(255) NULL AFTER klant_email");
         }
@@ -783,47 +790,49 @@ function bestaatEmailConceptVoorThread($conn, $threadId)
     return (bool) $stmt->fetch();
 }
 
-function voegEmailConceptToe($conn, $threadId, $klantEmail, $conceptTekst, $ontvangenOpEmail = '', $afzenderAliasEmail = '')
+function voegEmailConceptToe($conn, $threadId, $klantEmail, $conceptTekst, $ontvangenOpEmail = '', $afzenderAliasEmail = '', $onderwerp = '')
 {
     // Dit slaat het concept op als draft.
     zorgEmailConceptenAliasKolommen($conn);
+    $heeftOnderwerp = tabelHeeftKolom($conn, 'email_concepten', 'onderwerp');
     $heeftOntvangen = tabelHeeftKolom($conn, 'email_concepten', 'ontvangen_op_email');
     $heeftAfzender = tabelHeeftKolom($conn, 'email_concepten', 'afzender_alias_email');
 
-    if ($heeftOntvangen && $heeftAfzender) {
-        $stmt = $conn->prepare("
-            INSERT INTO email_concepten (gmail_thread_id, klant_email, ontvangen_op_email, afzender_alias_email, concept_tekst, status)
-            VALUES (:thread_id, :klant_email, :ontvangen, :afzender, :concept_tekst, 'draft')
-        ");
-        $stmt->execute([
-            ':thread_id' => (string) $threadId,
-            ':klant_email' => (string) $klantEmail,
-            ':ontvangen' => (string) $ontvangenOpEmail,
-            ':afzender' => (string) $afzenderAliasEmail,
-            ':concept_tekst' => (string) $conceptTekst,
-        ]);
-    } elseif ($heeftOntvangen) {
-        $stmt = $conn->prepare("
-            INSERT INTO email_concepten (gmail_thread_id, klant_email, ontvangen_op_email, concept_tekst, status)
-            VALUES (:thread_id, :klant_email, :ontvangen, :concept_tekst, 'draft')
-        ");
-        $stmt->execute([
-            ':thread_id' => (string) $threadId,
-            ':klant_email' => (string) $klantEmail,
-            ':ontvangen' => (string) $ontvangenOpEmail,
-            ':concept_tekst' => (string) $conceptTekst,
-        ]);
-    } else {
-        $stmt = $conn->prepare("
-            INSERT INTO email_concepten (gmail_thread_id, klant_email, concept_tekst, status)
-            VALUES (:thread_id, :klant_email, :concept_tekst, 'draft')
-        ");
-        $stmt->execute([
-            ':thread_id' => (string) $threadId,
-            ':klant_email' => (string) $klantEmail,
-            ':concept_tekst' => (string) $conceptTekst,
-        ]);
+    $kolommen = ['gmail_thread_id', 'klant_email'];
+    $placeholders = [':thread_id', ':klant_email'];
+    $params = [
+        ':thread_id' => (string) $threadId,
+        ':klant_email' => (string) $klantEmail,
+    ];
+
+    if ($heeftOnderwerp) {
+        $kolommen[] = 'onderwerp';
+        $placeholders[] = ':onderwerp';
+        $params[':onderwerp'] = (string) $onderwerp;
     }
+    if ($heeftOntvangen) {
+        $kolommen[] = 'ontvangen_op_email';
+        $placeholders[] = ':ontvangen';
+        $params[':ontvangen'] = (string) $ontvangenOpEmail;
+    }
+    if ($heeftAfzender) {
+        $kolommen[] = 'afzender_alias_email';
+        $placeholders[] = ':afzender';
+        $params[':afzender'] = (string) $afzenderAliasEmail;
+    }
+
+    $kolommen[] = 'concept_tekst';
+    $placeholders[] = ':concept_tekst';
+    $params[':concept_tekst'] = (string) $conceptTekst;
+
+    $kolommen[] = 'status';
+    $placeholders[] = "'draft'";
+
+    $stmt = $conn->prepare("
+        INSERT INTO email_concepten (" . implode(', ', $kolommen) . ")
+        VALUES (" . implode(', ', $placeholders) . ")
+    ");
+    $stmt->execute($params);
 
     return (int) $conn->lastInsertId();
 }
@@ -1068,6 +1077,7 @@ function verwerkEmailRulesVoorMail($rules, $fromHeader, $subject)
 
 function zorgEmailAliassenTabel($conn)
 {
+    // Deze tabel bewaart welke afzender-adressen (send-as) beschikbaar zijn en of de AI ze mag gebruiken.
     $conn->exec("
         CREATE TABLE IF NOT EXISTS `email_aliassen` (
             `send_as_email` VARCHAR(255) NOT NULL,
@@ -1084,6 +1094,7 @@ function zorgEmailAliassenTabel($conn)
 
 function haalEmailAliassen($conn)
 {
+    // Alle aliassen (ook uitgeschakelde) voor het dashboard.
     zorgEmailAliassenTabel($conn);
     $stmt = $conn->prepare("
         SELECT send_as_email, display_name, is_primary, is_default, is_enabled, updated_at
@@ -1097,6 +1108,7 @@ function haalEmailAliassen($conn)
 
 function haalActieveEmailAliassen($conn)
 {
+    // Alleen aliassen die aan staan (keuzelijst voor het versturen).
     zorgEmailAliassenTabel($conn);
     $stmt = $conn->prepare("
         SELECT send_as_email, display_name, is_primary, is_default
@@ -1111,6 +1123,7 @@ function haalActieveEmailAliassen($conn)
 
 function upsertEmailAliassenVanGmail($conn, $sendAsArray)
 {
+    // Zet aliassen uit Gmail in de database. Bestaat hij al? Dan werken we hem bij.
     zorgEmailAliassenTabel($conn);
     if (!is_array($sendAsArray)) {
         return 0;
@@ -1151,6 +1164,7 @@ function upsertEmailAliassenVanGmail($conn, $sendAsArray)
 
 function slaEmailAliassenActiefOp($conn, $enabledMap)
 {
+    // Sla op welke aliassen aan of uit staan.
     zorgEmailAliassenTabel($conn);
     if (!is_array($enabledMap)) {
         $enabledMap = [];
@@ -1173,6 +1187,7 @@ function slaEmailAliassenActiefOp($conn, $enabledMap)
 
 function haalOntvangerEmailUitMailHeaders($headers)
 {
+    // Probeer te bepalen op welk inbox/alias-adres de klant gemaild heeft.
     if (!is_array($headers)) {
         return '';
     }
@@ -1194,6 +1209,7 @@ function haalOntvangerEmailUitMailHeaders($headers)
 
 function bepaalAfzenderAliasVoorOntvanger($conn, $ontvangerEmail)
 {
+    // Als het ontvanger-adres een actieve alias is: gebruik die. Anders fallback naar eerste actieve alias.
     $ontvangerEmail = strtolower(trim((string) $ontvangerEmail));
     if ($ontvangerEmail !== '' && filter_var($ontvangerEmail, FILTER_VALIDATE_EMAIL)) {
         try {
@@ -1227,6 +1243,7 @@ function bepaalAfzenderAliasVoorOntvanger($conn, $ontvangerEmail)
 
 function bouwFromHeaderVoorAlias($conn, $aliasEmail)
 {
+    // Maak de From-regel voor de mail (naam + e-mail als we die naam hebben).
     $aliasEmail = strtolower(trim((string) $aliasEmail));
     if ($aliasEmail === '' || !filter_var($aliasEmail, FILTER_VALIDATE_EMAIL)) {
         return '';
@@ -1244,6 +1261,344 @@ function bouwFromHeaderVoorAlias($conn, $aliasEmail)
     } catch (Throwable) {
     }
     return $aliasEmail;
+}
+
+function schrijfEmailWorkerLog($message)
+{
+    // Schrijf fouten en status van de achtergrond-sync naar een logbestand.
+    $logMap = $_SERVER['DOCUMENT_ROOT'] . '/storage/logs';
+    $logBestand = $logMap . '/email_worker.log';
+    if (!is_dir($logMap)) {
+        @mkdir($logMap, 0775, true);
+    }
+    $regel = '[' . date('Y-m-d H:i:s') . '] ' . (string) $message . PHP_EOL;
+    @file_put_contents($logBestand, $regel, FILE_APPEND);
+}
+
+function haalEmailWorkerSecretUitRequest()
+{
+    // Lees de geheime sleutel uit de request (header of POST).
+    $headerSecret = $_SERVER['HTTP_X_WORKER_SECRET'] ?? '';
+    if (is_string($headerSecret) && trim($headerSecret) !== '') {
+        return trim((string) $headerSecret);
+    }
+
+    $postSecret = $_POST['worker_secret'] ?? '';
+    if (is_string($postSecret) && trim($postSecret) !== '') {
+        return trim((string) $postSecret);
+    }
+
+    return '';
+}
+
+function haalOfMaakEmailWorkerSecret($conn)
+{
+    // Deze geheime sleutel beveiligt de worker. Als hij nog niet bestaat, maken we hem 1 keer aan.
+    try {
+        zorgDashboardSettingsTabel($conn);
+        $stmt = $conn->prepare("SELECT setting_value FROM dashboard_settings WHERE setting_key = 'email_worker_secret' LIMIT 1");
+        $stmt->execute();
+        $row = $stmt->fetch();
+        if ($row && isset($row['setting_value']) && trim((string) $row['setting_value']) !== '') {
+            return trim((string) $row['setting_value']);
+        }
+
+        $nieuw = bin2hex(random_bytes(32));
+        $save = $conn->prepare("
+            INSERT INTO dashboard_settings (setting_key, setting_value)
+            VALUES ('email_worker_secret', :v)
+            ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value)
+        ");
+        $save->execute([':v' => $nieuw]);
+        return $nieuw;
+    } catch (Throwable) {
+        return '';
+    }
+}
+
+function openEmailSyncLockHandle()
+{
+    // Dit is een "slotje" zodat de sync niet twee keer tegelijk kan draaien.
+    $logMap = $_SERVER['DOCUMENT_ROOT'] . '/storage/logs';
+    if (!is_dir($logMap)) {
+        @mkdir($logMap, 0775, true);
+    }
+
+    $lockPath = $logMap . '/email_sync.lock';
+    $fh = @fopen($lockPath, 'c+');
+    if ($fh === false) {
+        return null;
+    }
+    if (!@flock($fh, LOCK_EX | LOCK_NB)) {
+        @fclose($fh);
+        return null;
+    }
+    return $fh;
+}
+
+function runEmailSyncOnce($conn, $maxResults = 5)
+{
+    // Doe 1 keer sync: haal ongelezen mails op, maak concepten, markeer mails als gelezen.
+    $maxResults = (int) $maxResults;
+    if ($maxResults <= 0) {
+        $maxResults = 1;
+    }
+    if ($maxResults > 10) {
+        $maxResults = 10;
+    }
+
+    $token = haalGmailAccessTokenOp();
+    if (empty($token['ok'])) {
+        $errTekst = isset($token['error']) ? (string) $token['error'] : 'Gmail token ontbreekt.';
+        return ['ok' => false, 'new' => 0, 'error' => $errTekst];
+    }
+
+    $accessToken = (string) $token['access_token'];
+    $aliassen = [];
+    try {
+        $aliassen = haalEmailAliassen($conn);
+    } catch (Throwable) {
+        $aliassen = [];
+    }
+    $aliasEmails = [];
+    foreach ($aliassen as $a) {
+        if (is_array($a) && isset($a['send_as_email'])) {
+            $em = strtolower(trim((string) $a['send_as_email']));
+            if ($em !== '' && filter_var($em, FILTER_VALIDATE_EMAIL)) {
+                $aliasEmails[$em] = true;
+            }
+        }
+    }
+
+    $actieveRegels = [];
+    try {
+        $actieveRegels = haalActieveEmailRules($conn);
+    } catch (Throwable) {
+        $actieveRegels = [];
+    }
+
+    $aantalNieuwe = 0;
+    $lijst = gmailApiRequest('GET', 'users/me/messages', $accessToken, null, [
+        'labelIds' => 'INBOX',
+        'q' => 'is:unread',
+        'maxResults' => $maxResults,
+    ]);
+
+    if (empty($lijst['ok'])) {
+        $err = isset($lijst['error']) ? (string) $lijst['error'] : 'Ongelezen mails ophalen is mislukt.';
+        return ['ok' => false, 'new' => 0, 'error' => $err];
+    }
+
+    $messages = $lijst['data']['messages'] ?? [];
+    if (!is_array($messages) || empty($messages)) {
+        return ['ok' => true, 'new' => 0, 'error' => ''];
+    }
+
+    foreach ($messages as $m) {
+        if (!is_array($m) || empty($m['id'])) {
+            continue;
+        }
+
+        $msgId = (string) $m['id'];
+        $detail = gmailApiRequest('GET', 'users/me/messages/' . rawurlencode($msgId), $accessToken, null, [
+            'format' => 'full',
+        ]);
+        if (empty($detail['ok'])) {
+            continue;
+        }
+
+        $data = $detail['data'] ?? [];
+        $threadId = isset($data['threadId']) ? (string) $data['threadId'] : '';
+        $payload = $data['payload'] ?? [];
+        $headers = is_array($payload) && isset($payload['headers']) ? $payload['headers'] : [];
+        $from = haalHeaderOp($headers, 'From') ?? '';
+        $subject = haalHeaderOp($headers, 'Subject') ?? '';
+        $klantEmail = parseerEmailAdresUitFromHeader($from);
+        $ontvangerEmail = haalOntvangerEmailUitMailHeaders($headers);
+        $ontvangerEmail = strtolower(trim((string) $ontvangerEmail));
+        if ($ontvangerEmail !== '' && !isset($aliasEmails[$ontvangerEmail])) {
+            $ontvangerEmail = '';
+        }
+        $afzenderAlias = bepaalAfzenderAliasVoorOntvanger($conn, $ontvangerEmail);
+
+        if ($threadId === '' || $klantEmail === '') {
+            continue;
+        }
+
+        $rulesResult = verwerkEmailRulesVoorMail($actieveRegels, $from, $subject);
+        if (!empty($rulesResult['ignore'])) {
+            gmailApiRequest('POST', 'users/me/messages/' . rawurlencode($msgId) . '/modify', $accessToken, [
+                'removeLabelIds' => ['UNREAD'],
+            ]);
+            continue;
+        }
+
+        if (bestaatEmailConceptVoorThread($conn, $threadId)) {
+            gmailApiRequest('POST', 'users/me/messages/' . rawurlencode($msgId) . '/modify', $accessToken, [
+                'removeLabelIds' => ['UNREAD'],
+            ]);
+            continue;
+        }
+
+        $text = zoekTekstPlainInPayload($payload);
+        if (!is_string($text) || $text === '') {
+            $text = zoekTekstHtmlInPayload($payload);
+        }
+        if (!is_string($text) || $text === '') {
+            $text = isset($data['snippet']) ? (string) $data['snippet'] : '';
+        }
+        $text = normaliseerTekst($text);
+        if ($text === '') {
+            continue;
+        }
+
+        $extraInstructies = isset($rulesResult['extra_instructies']) ? (string) $rulesResult['extra_instructies'] : '';
+        $ai = roepOpenAiAanVoorEmailConcept($subject, $text, $extraInstructies);
+        if (empty($ai['ok'])) {
+            $err = isset($ai['error']) ? (string) $ai['error'] : 'OpenAI fout.';
+            schrijfEmailWorkerLog('OpenAI fout: ' . $err);
+            continue;
+        }
+
+        $conceptTekst = (string) $ai['content'];
+        if ($conceptTekst === '') {
+            continue;
+        }
+
+        voegEmailConceptToe($conn, $threadId, $klantEmail, $conceptTekst, $ontvangerEmail, $afzenderAlias, $subject);
+        gmailApiRequest('POST', 'users/me/messages/' . rawurlencode($msgId) . '/modify', $accessToken, [
+            'removeLabelIds' => ['UNREAD'],
+        ]);
+        $aantalNieuwe++;
+    }
+
+    return ['ok' => true, 'new' => $aantalNieuwe, 'error' => ''];
+}
+
+function triggerEmailSyncWorkerInBackground($conn)
+{
+    // Start de worker zonder te wachten op antwoord (zoals de chat worker).
+    $host = $_SERVER['SERVER_NAME'] ?? ($_SERVER['HTTP_HOST'] ?? '');
+    $host = preg_replace('/[^a-zA-Z0-9.\-]/', '', (string) $host);
+    if (!is_string($host) || $host === '') {
+        return false;
+    }
+
+    $isHttps = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off');
+    $poort = $isHttps ? 443 : 80;
+    $socketHost = ($isHttps ? 'ssl://' : '') . $host;
+
+    $secret = getProjectEnvValue('EMAIL_WORKER_SECRET');
+    $secret = is_string($secret) ? trim($secret) : '';
+    if ($secret === '') {
+        $secret = haalOfMaakEmailWorkerSecret($conn);
+    }
+    if (!is_string($secret) || $secret === '') {
+        return false;
+    }
+
+    $body = http_build_query([
+        'run' => '1',
+        'worker_secret' => $secret,
+    ]);
+
+    $socket = @fsockopen($socketHost, $poort, $errorCode, $errorMessage, 1);
+    if ($socket === false) {
+        return false;
+    }
+
+    $request = "POST /EmailDashboard.php?email_worker=1 HTTP/1.1\r\n";
+    $request .= "Host: " . $host . "\r\n";
+    $request .= "Content-Type: application/x-www-form-urlencoded\r\n";
+    $request .= "Content-Length: " . strlen($body) . "\r\n";
+    $request .= "X-Worker-Secret: " . $secret . "\r\n";
+    $request .= "Connection: Close\r\n\r\n";
+    $request .= $body;
+
+    @fwrite($socket, $request);
+    @fclose($socket);
+    return true;
+}
+
+if (isset($_GET['email_worker']) && (string) $_GET['email_worker'] === '1') {
+    // Dit is de worker-mode: alleen bedoeld voor interne calls (niet voor normale bezoekers).
+    if ((string) ($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') {
+        http_response_code(405);
+        exit('Alleen POST is toegestaan.');
+    }
+
+    $requiredSecret = getProjectEnvValue('EMAIL_WORKER_SECRET');
+    $requiredSecret = is_string($requiredSecret) ? trim($requiredSecret) : '';
+    if ($requiredSecret === '') {
+        $requiredSecret = haalOfMaakEmailWorkerSecret($conn);
+    }
+    if ($requiredSecret === '') {
+        http_response_code(500);
+        exit('Secret ontbreekt.');
+    }
+
+    $given = haalEmailWorkerSecretUitRequest();
+    if ($given === '' || !hash_equals($requiredSecret, $given)) {
+        http_response_code(403);
+        exit('Niet toegestaan.');
+    }
+
+    // Als er al een run bezig is, stoppen we meteen.
+    $lockHandle = openEmailSyncLockHandle();
+    if ($lockHandle === null) {
+        http_response_code(200);
+        exit('Busy');
+    }
+
+    // Cooldown zodat we Gmail/OpenAI niet te vaak achter elkaar aanroepen.
+    $cooldownSec = 60;
+    $lastRunRaw = '';
+    try {
+        $lastRunRaw = haalDashboardSetting($conn, 'email_sync_last_run');
+    } catch (Throwable) {
+        $lastRunRaw = '';
+    }
+    $lastRun = (int) trim((string) $lastRunRaw);
+    if ($lastRun > 0 && (time() - $lastRun) < $cooldownSec) {
+        @flock($lockHandle, LOCK_UN);
+        @fclose($lockHandle);
+        http_response_code(200);
+        exit('Cooldown');
+    }
+
+    try {
+        slaDashboardSettingOp($conn, 'email_sync_last_run', (string) time());
+    } catch (Throwable) {
+    }
+
+    $result = null;
+    try {
+        $result = runEmailSyncOnce($conn, 5);
+    } catch (Throwable $e) {
+        schrijfEmailWorkerLog('Worker fout: ' . $e->getMessage());
+        $result = ['ok' => false, 'new' => 0, 'error' => 'Worker fout.'];
+    }
+
+    if (is_array($result) && empty($result['ok'])) {
+        $err = isset($result['error']) ? (string) $result['error'] : 'Onbekende fout';
+        schrijfEmailWorkerLog('Sync fout: ' . $err);
+        try {
+            slaDashboardSettingOp($conn, 'email_sync_last_error', $err);
+        } catch (Throwable) {
+        }
+    } else {
+        try {
+            slaDashboardSettingOp($conn, 'email_sync_last_error', '');
+        } catch (Throwable) {
+        }
+    }
+
+    @flock($lockHandle, LOCK_UN);
+    @fclose($lockHandle);
+
+    http_response_code(200);
+    $new = is_array($result) && isset($result['new']) ? (int) $result['new'] : 0;
+    exit('OK new=' . (string) $new);
 }
 
 vereisDashboardLogin();
@@ -1848,158 +2203,25 @@ if ($settings) {
     stuurHtml(200, renderLayout('Email dashboard', $layout, $melding, $meldingType));
 }
 
-$heeftNetGesynct = false;
-$syncFout = null;
-$cooldownSec = 30;
-$vorigeSync = isset($_SESSION['email_dashboard_sync_at']) ? (int) $_SESSION['email_dashboard_sync_at'] : 0;
-$magSync = (time() - $vorigeSync) >= $cooldownSec;
-if ($magSync) {
-    // Bij openen/refresh halen we nieuwe ongelezen mails op en maken we er concepten van.
-    $_SESSION['email_dashboard_sync_at'] = time();
-    $token = haalGmailAccessTokenOp();
-    if (!empty($token['ok'])) {
-        $accessToken = (string) $token['access_token'];
-        $aliassen = [];
-        try {
-            $aliassen = haalEmailAliassen($conn);
-        } catch (Throwable) {
-            $aliassen = [];
-        }
-        $aliasEmails = [];
-        foreach ($aliassen as $a) {
-            if (is_array($a) && isset($a['send_as_email'])) {
-                $em = strtolower(trim((string) $a['send_as_email']));
-                if ($em !== '' && filter_var($em, FILTER_VALIDATE_EMAIL)) {
-                    $aliasEmails[$em] = true;
-                }
-            }
-        }
-        $actieveRegels = [];
-        try {
-            $actieveRegels = haalActieveEmailRules($conn);
-        } catch (Throwable) {
-            $actieveRegels = [];
-        }
-        $lijst = gmailApiRequest('GET', 'users/me/messages', $accessToken, null, [
-            'labelIds' => 'INBOX',
-            'q' => 'is:unread',
-            'maxResults' => 5,
-        ]);
-
-        if (!empty($lijst['ok'])) {
-            $messages = $lijst['data']['messages'] ?? [];
-            if (is_array($messages)) {
-                foreach ($messages as $m) {
-                    if (!is_array($m) || empty($m['id'])) {
-                        continue;
-                    }
-
-                    $msgId = (string) $m['id'];
-                    $detail = gmailApiRequest('GET', 'users/me/messages/' . rawurlencode($msgId), $accessToken, null, [
-                        'format' => 'full',
-                    ]);
-                    if (empty($detail['ok'])) {
-                        continue;
-                    }
-
-                    $data = $detail['data'] ?? [];
-                    $threadId = isset($data['threadId']) ? (string) $data['threadId'] : '';
-                    $payload = $data['payload'] ?? [];
-                    $headers = is_array($payload) && isset($payload['headers']) ? $payload['headers'] : [];
-                    $from = haalHeaderOp($headers, 'From') ?? '';
-                    $subject = haalHeaderOp($headers, 'Subject') ?? '';
-                    $klantEmail = parseerEmailAdresUitFromHeader($from);
-                    $ontvangerEmail = haalOntvangerEmailUitMailHeaders($headers);
-                    $ontvangerEmail = strtolower(trim((string) $ontvangerEmail));
-                    if ($ontvangerEmail !== '' && !isset($aliasEmails[$ontvangerEmail])) {
-                        $ontvangerEmail = '';
-                    }
-                    $afzenderAlias = bepaalAfzenderAliasVoorOntvanger($conn, $ontvangerEmail);
-
-                    if ($threadId === '' || $klantEmail === '') {
-                        continue;
-                    }
-
-                    $rulesResult = verwerkEmailRulesVoorMail($actieveRegels, $from, $subject);
-                    if (!empty($rulesResult['ignore'])) {
-                        gmailApiRequest('POST', 'users/me/messages/' . rawurlencode($msgId) . '/modify', $accessToken, [
-                            'removeLabelIds' => ['UNREAD'],
-                        ]);
-                        continue;
-                    }
-
-                    if (bestaatEmailConceptVoorThread($conn, $threadId)) {
-                        gmailApiRequest('POST', 'users/me/messages/' . rawurlencode($msgId) . '/modify', $accessToken, [
-                            'removeLabelIds' => ['UNREAD'],
-                        ]);
-                        continue;
-                    }
-
-                    $text = zoekTekstPlainInPayload($payload);
-                    if (!is_string($text) || $text === '') {
-                        $text = zoekTekstHtmlInPayload($payload);
-                    }
-                    if (!is_string($text) || $text === '') {
-                        $text = isset($data['snippet']) ? (string) $data['snippet'] : '';
-                    }
-                    $text = normaliseerTekst($text);
-                    if ($text === '') {
-                        continue;
-                    }
-
-                    $extraInstructies = isset($rulesResult['extra_instructies']) ? (string) $rulesResult['extra_instructies'] : '';
-                    $ai = roepOpenAiAanVoorEmailConcept($subject, $text, $extraInstructies);
-                    if (empty($ai['ok'])) {
-                        continue;
-                    }
-
-                    $conceptTekst = (string) $ai['content'];
-                    if ($conceptTekst === '') {
-                        continue;
-                    }
-
-                    voegEmailConceptToe($conn, $threadId, $klantEmail, $conceptTekst, $ontvangerEmail, $afzenderAlias);
-                    gmailApiRequest('POST', 'users/me/messages/' . rawurlencode($msgId) . '/modify', $accessToken, [
-                        'removeLabelIds' => ['UNREAD'],
-                    ]);
-                    $heeftNetGesynct = true;
-                }
-            }
-        }
-    } else {
-        $errTekst = isset($token['error']) ? (string) $token['error'] : 'Gmail token ontbreekt.';
-        $authUrl = isset($token['reauth_url']) ? (string) $token['reauth_url'] : '';
-        if ($authUrl !== '') {
-            $syncFout = [
-                'html' => '<div style="display:flex; flex-wrap:wrap; gap:10px; align-items:center; justify-content:space-between;"><div>' . e($errTekst) . '</div>' . maakGoogleKoppelKnopHtml($authUrl) . '</div>',
-            ];
-        } else {
-            $syncFout = $errTekst;
-        }
+if (empty($_GET['email_worker'])) {
+    // Bij openen van het overzicht starten we de worker op de achtergrond (niet wachten).
+    $cooldownSec = 15;
+    $vorigeTrigger = isset($_SESSION['email_dashboard_worker_trigger_at']) ? (int) $_SESSION['email_dashboard_worker_trigger_at'] : 0;
+    if ((time() - $vorigeTrigger) >= $cooldownSec) {
+        $_SESSION['email_dashboard_worker_trigger_at'] = time();
+        triggerEmailSyncWorkerInBackground($conn);
     }
 }
 
-if ($heeftNetGesynct && (!is_string($melding) || $melding === '')) {
-    $meldingType = 'ok';
-    $melding = 'Nieuwe ongelezen mails zijn toegevoegd als concept.';
-}
-if (is_string($syncFout) && $syncFout !== '' && (!is_string($melding) || $melding === '')) {
-    $meldingType = 'error';
-    $melding = $syncFout;
-}
-if (is_array($syncFout) && (!is_string($melding) || $melding === '')) {
-    $meldingType = 'error';
-    $melding = $syncFout;
-}
-
-$stmt = $conn->prepare("SELECT id, gmail_thread_id, klant_email, created_at FROM email_concepten WHERE status = 'draft' ORDER BY created_at DESC");
+$stmt = $conn->prepare("SELECT id, gmail_thread_id, klant_email, onderwerp, created_at FROM email_concepten WHERE status = 'draft' ORDER BY created_at DESC");
 $stmt->execute();
 $rows = $stmt->fetchAll();
 
 $concept = null;
 if ($id > 0) {
     // We openen 1 concept uit de lijst (rechts in beeld).
-    $sel = $conn->prepare("SELECT id, gmail_thread_id, klant_email, concept_tekst, status, created_at FROM email_concepten WHERE id = :id LIMIT 1");
+    zorgEmailConceptenAliasKolommen($conn);
+    $sel = $conn->prepare("SELECT id, gmail_thread_id, klant_email, onderwerp, concept_tekst, status, created_at FROM email_concepten WHERE id = :id LIMIT 1");
     $sel->execute([':id' => $id]);
     $concept = $sel->fetch();
     if (!$concept) {
@@ -2014,37 +2236,12 @@ $lijstHtml .= '<div style="padding:12px 14px; border-bottom:1px solid #9ca3af; f
 if (empty($rows)) {
     $lijstHtml .= '<div style="padding:14px; color:#6b7280;">Geen draft concepten gevonden.</div>';
 } else {
-    $onderwerpCache = [];
-    $tokenVoorOnderwerp = haalGmailAccessTokenOp();
-    $accessTokenVoorOnderwerp = !empty($tokenVoorOnderwerp['ok']) ? (string) $tokenVoorOnderwerp['access_token'] : '';
     $lijstHtml .= '<div style="padding:10px; max-height: var(--list-max-h); overflow:auto;">';
     foreach ($rows as $r) {
         $isActief = ($id > 0 && (int) $r['id'] === (int) $id);
         $bg = $isActief ? '#bfdbfe' : '#e5e7eb';
         $border = $isActief ? '#60a5fa' : '#9ca3af';
-        $threadId = isset($r['gmail_thread_id']) ? (string) $r['gmail_thread_id'] : '';
-        $onderwerp = '';
-        if ($accessTokenVoorOnderwerp !== '' && $threadId !== '') {
-            if (isset($onderwerpCache[$threadId])) {
-                $onderwerp = (string) $onderwerpCache[$threadId];
-            } else {
-                $t = gmailApiRequest('GET', 'users/me/threads/' . rawurlencode($threadId), $accessTokenVoorOnderwerp, null, [
-                    'format' => 'metadata',
-                    'metadataHeaders' => 'Subject',
-                ]);
-                if (!empty($t['ok']) && isset($t['data']['messages']) && is_array($t['data']['messages'])) {
-                    $messages = $t['data']['messages'];
-                    $last = end($messages);
-                    if (is_array($last) && isset($last['payload']['headers'])) {
-                        $sub = haalHeaderOp($last['payload']['headers'], 'Subject');
-                        if (is_string($sub) && $sub !== '') {
-                            $onderwerp = $sub;
-                        }
-                    }
-                }
-                $onderwerpCache[$threadId] = $onderwerp;
-            }
-        }
+        $onderwerp = isset($r['onderwerp']) ? trim((string) $r['onderwerp']) : '';
         $titelLinks = $onderwerp !== '' ? $onderwerp : ('Concept #' . (string) $r['id']);
         if (strlen($titelLinks) > 90) {
             $titelLinks = substr($titelLinks, 0, 90) . '...';
@@ -2066,9 +2263,10 @@ if (!$concept) {
     $detailHtml .= '<div style="color:#6b7280;">Klik links een concept aan om de originele klantmail en het AI-concept te bekijken.</div>';
     $detailHtml .= '</div>';
 } else {
+    // Als je een concept opent, laden we de hele conversatie om de originele mail te tonen.
     $origineelTekst = null;
     $origineelHtml = '';
-    $origineelOnderwerp = '';
+    $origineelOnderwerp = isset($concept['onderwerp']) ? trim((string) $concept['onderwerp']) : '';
     $token = haalGmailAccessTokenOp();
     if (!empty($token['ok'])) {
         $accessToken = (string) $token['access_token'];
