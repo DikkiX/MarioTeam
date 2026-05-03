@@ -546,37 +546,6 @@ function gmailZorgLabelId($accessToken, $labelNaam)
     return '';
 }
 
-function gmailZetThreadsOngelezen($accessToken, $threadIds)
-{
-    // Zet Gmail conversaties terug op "ongelezen".
-    if (!is_array($threadIds) || empty($threadIds)) {
-        return ['totaal' => 0, 'ok' => 0, 'fout' => 0];
-    }
-
-    $totaal = 0;
-    $ok = 0;
-    $fout = 0;
-
-    foreach ($threadIds as $threadId) {
-        $threadId = trim((string) $threadId);
-        if ($threadId === '') {
-            continue;
-        }
-
-        $totaal++;
-        $resp = gmailApiRequest('POST', 'users/me/threads/' . rawurlencode($threadId) . '/modify', $accessToken, [
-            'addLabelIds' => ['UNREAD'],
-        ]);
-        if (!empty($resp['ok'])) {
-            $ok++;
-        } else {
-            $fout++;
-        }
-    }
-
-    return ['totaal' => $totaal, 'ok' => $ok, 'fout' => $fout];
-}
-
 function base64UrlDecode($data)
 {
     // Gmail gebruikt base64url encoding voor inhoud.
@@ -1773,64 +1742,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     vereisCsrf();
 
     $actie = isset($_POST['actie']) ? (string) $_POST['actie'] : '';
-    if ($actie === 'restore_unread_2h') {
-        // Dit zet Gmail weer op ongelezen voor concepten van de laatste 2 uur.
-        $token = haalGmailAccessTokenOp();
-        if (empty($token['ok'])) {
-            $errTekst = isset($token['error']) ? (string) $token['error'] : 'Geen Gmail token.';
-            $authUrl = isset($token['reauth_url']) ? (string) $token['reauth_url'] : '';
-            if ($authUrl !== '') {
-                $_SESSION['email_dashboard_flash'] = [
-                    'type' => 'error',
-                    'melding' => [
-                        'html' => '<div style="display:flex; flex-wrap:wrap; gap:10px; align-items:center; justify-content:space-between;"><div>' . e($errTekst) . '</div>' . maakGoogleKoppelKnopHtml($authUrl) . '</div>',
-                    ],
-                ];
-            } else {
-                $_SESSION['email_dashboard_flash'] = [
-                    'type' => 'error',
-                    'melding' => $errTekst,
-                ];
-            }
-            header('Location: /EmailDashboard.php?settings=1&tab=rules', true, 303);
-            exit;
-        }
-
-        $accessToken = (string) $token['access_token'];
-        $threadIds = [];
-        try {
-            $stmt = $conn->prepare("
-                SELECT DISTINCT gmail_thread_id
-                FROM email_concepten
-                WHERE status = 'draft'
-                  AND created_at >= (NOW() - INTERVAL 2 HOUR)
-            ");
-            $stmt->execute();
-            $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
-            if (is_array($rows)) {
-                foreach ($rows as $r) {
-                    $tid = isset($r['gmail_thread_id']) ? trim((string) $r['gmail_thread_id']) : '';
-                    if ($tid !== '') {
-                        $threadIds[] = $tid;
-                    }
-                }
-            }
-        } catch (Throwable $e) {
-            $threadIds = [];
-        }
-
-        $result = gmailZetThreadsOngelezen($accessToken, $threadIds);
-        $totaal = (int) ($result['totaal'] ?? 0);
-        $ok = (int) ($result['ok'] ?? 0);
-        $fout = (int) ($result['fout'] ?? 0);
-
-        $_SESSION['email_dashboard_flash'] = [
-            'type' => $fout > 0 ? 'error' : 'ok',
-            'melding' => 'Gmail is bijgewerkt. Threads: ' . (string) $totaal . ', ongelezen gezet: ' . (string) $ok . ', fouten: ' . (string) $fout . '.',
-        ];
-        header('Location: /EmailDashboard.php?settings=1&tab=rules', true, 303);
-        exit;
-    }
     if ($actie === 'save_tone') {
         // Dit slaat de tone of voice tekst op in de database.
         $tone = isset($_POST['tone_of_voice']) ? trim((string) $_POST['tone_of_voice']) : '';
@@ -2240,16 +2151,6 @@ if ($settings) {
 
         $content .= '<div style="font-weight:800; margin-bottom:8px;">Regels &amp; filters</div>';
         $content .= '<div style="color:#6b7280; margin-bottom:12px;">Regels worden toegepast voordat er een AI-concept gemaakt wordt.</div>';
-
-        $content .= '<div style="background:#ffffff; border:1px solid #9ca3af; border-radius:12px; padding:12px 12px; margin-bottom:14px;">';
-        $content .= '<div style="font-weight:800; margin-bottom:6px;">Herstel Gmail (2 uur)</div>';
-        $content .= '<div style="color:#6b7280; margin-bottom:10px;">Zet mails van de laatste 2 uur weer op ongelezen in Gmail (op basis van concepten in dit dashboard).</div>';
-        $content .= '<form method="post" action="/EmailDashboard.php?settings=1&amp;tab=rules" style="margin:0;" onsubmit="return confirm(\'Gmail mails van de laatste 2 uur terug op ongelezen zetten?\')">';
-        $content .= '<input type="hidden" name="csrf" value="' . e($csrf) . '">';
-        $content .= '<input type="hidden" name="actie" value="restore_unread_2h">';
-        $content .= '<button type="submit" style="background:#e5e7eb; border:1px solid #9ca3af; color:#111827; font-weight:800; padding:10px 14px; border-radius:10px; cursor:pointer;">Zet terug op ongelezen</button>';
-        $content .= '</form>';
-        $content .= '</div>';
 
         $ruleIdValue = $edit ? (int) $edit['id'] : 0;
         $isEnabledValue = $edit ? ((int) $edit['is_enabled'] === 1) : true;
