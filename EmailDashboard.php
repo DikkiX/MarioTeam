@@ -1354,6 +1354,74 @@ function runEmailSyncOnce($conn, $maxResults = 5)
     }
 
     $accessToken = (string) $token['access_token'];
+
+    $backfillOnderwerpen = function ($limit) use ($conn, $accessToken) {
+        try {
+            zorgEmailConceptenAliasKolommen($conn);
+            if (!tabelHeeftKolom($conn, 'email_concepten', 'onderwerp')) {
+                return;
+            }
+        } catch (Throwable) {
+            return;
+        }
+
+        $limit = (int) $limit;
+        if ($limit <= 0) {
+            $limit = 1;
+        }
+        if ($limit > 30) {
+            $limit = 30;
+        }
+
+        $stmt = $conn->prepare("
+            SELECT id, gmail_thread_id
+            FROM email_concepten
+            WHERE status = 'draft'
+              AND (onderwerp IS NULL OR onderwerp = '')
+            ORDER BY created_at DESC
+            LIMIT :lim
+        ");
+        $stmt->bindValue(':lim', $limit, PDO::PARAM_INT);
+        $stmt->execute();
+        $rows = $stmt->fetchAll();
+        if (!is_array($rows) || empty($rows)) {
+            return;
+        }
+
+        foreach ($rows as $r) {
+            $id = isset($r['id']) ? (int) $r['id'] : 0;
+            $threadId = isset($r['gmail_thread_id']) ? (string) $r['gmail_thread_id'] : '';
+            if ($id <= 0 || $threadId === '') {
+                continue;
+            }
+
+            $t = gmailApiRequest('GET', 'users/me/threads/' . rawurlencode($threadId), $accessToken, null, [
+                'format' => 'metadata',
+                'metadataHeaders' => 'Subject',
+            ]);
+            if (empty($t['ok']) || !isset($t['data']['messages']) || !is_array($t['data']['messages'])) {
+                continue;
+            }
+
+            $messages = $t['data']['messages'];
+            $last = end($messages);
+            if (!is_array($last) || !isset($last['payload']['headers'])) {
+                continue;
+            }
+
+            $sub = haalHeaderOp($last['payload']['headers'], 'Subject');
+            $sub = is_string($sub) ? trim($sub) : '';
+            if ($sub === '') {
+                continue;
+            }
+
+            $upd = $conn->prepare("UPDATE email_concepten SET onderwerp = :o WHERE id = :id AND (onderwerp IS NULL OR onderwerp = '')");
+            $upd->execute([
+                ':o' => $sub,
+                ':id' => $id,
+            ]);
+        }
+    };
     $aliassen = [];
     try {
         $aliassen = haalEmailAliassen($conn);
@@ -1470,6 +1538,11 @@ function runEmailSyncOnce($conn, $maxResults = 5)
             'removeLabelIds' => ['UNREAD'],
         ]);
         $aantalNieuwe++;
+    }
+
+    try {
+        $backfillOnderwerpen(20);
+    } catch (Throwable) {
     }
 
     return ['ok' => true, 'new' => $aantalNieuwe, 'error' => ''];
@@ -2299,6 +2372,17 @@ if (!$concept) {
                 $date = haalHeaderOp($h, 'Date');
                 if (is_string($sub) && $sub !== '') {
                     $origineelOnderwerp = $sub;
+                    $onderwerpDb = isset($concept['onderwerp']) ? trim((string) $concept['onderwerp']) : '';
+                    if ($onderwerpDb === '') {
+                        try {
+                            $upd = $conn->prepare("UPDATE email_concepten SET onderwerp = :o WHERE id = :id AND (onderwerp IS NULL OR onderwerp = '')");
+                            $upd->execute([
+                                ':o' => $origineelOnderwerp,
+                                ':id' => (int) $concept['id'],
+                            ]);
+                        } catch (Throwable) {
+                        }
+                    }
                 }
 
                 $rawHtml = haalHtmlUitPayload($gevonden['payload'] ?? []);
