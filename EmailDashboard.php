@@ -2310,8 +2310,8 @@ $lijstHtml .= '<div style="padding:12px 14px; border-bottom:1px solid #9ca3af; f
 if (empty($rows)) {
     $lijstHtml .= '<div style="padding:14px; color:#6b7280;">Geen draft concepten gevonden.</div>';
 } else {
-    // Als er nog concepten zonder onderwerp zijn, halen we een paar onderwerpen op uit Gmail.
-    // Dit is eenmalig: zodra ze opgeslagen zijn, komt de lijst weer volledig uit de database.
+    // Als er nog concepten zonder onderwerp zijn, halen we de onderwerpen op uit Gmail.
+    // Zodra ze opgeslagen zijn, komt de lijst weer volledig uit de database.
     $onderwerpCache = [];
     $missendeThreads = [];
     foreach ($rows as $r) {
@@ -2319,9 +2319,6 @@ if (empty($rows)) {
         $threadIdDb = isset($r['gmail_thread_id']) ? (string) $r['gmail_thread_id'] : '';
         if ($onderwerpDb === '' && $threadIdDb !== '' && !isset($missendeThreads[$threadIdDb])) {
             $missendeThreads[$threadIdDb] = true;
-        }
-        if (count($missendeThreads) >= 8) {
-            break;
         }
     }
     if (!empty($missendeThreads)) {
