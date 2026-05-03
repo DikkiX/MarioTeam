@@ -2310,12 +2310,68 @@ $lijstHtml .= '<div style="padding:12px 14px; border-bottom:1px solid #9ca3af; f
 if (empty($rows)) {
     $lijstHtml .= '<div style="padding:14px; color:#6b7280;">Geen draft concepten gevonden.</div>';
 } else {
+    // Als er nog concepten zonder onderwerp zijn, halen we een paar onderwerpen op uit Gmail.
+    // Dit is eenmalig: zodra ze opgeslagen zijn, komt de lijst weer volledig uit de database.
+    $onderwerpCache = [];
+    $missendeThreads = [];
+    foreach ($rows as $r) {
+        $onderwerpDb = isset($r['onderwerp']) ? trim((string) $r['onderwerp']) : '';
+        $threadIdDb = isset($r['gmail_thread_id']) ? (string) $r['gmail_thread_id'] : '';
+        if ($onderwerpDb === '' && $threadIdDb !== '' && !isset($missendeThreads[$threadIdDb])) {
+            $missendeThreads[$threadIdDb] = true;
+        }
+        if (count($missendeThreads) >= 8) {
+            break;
+        }
+    }
+    if (!empty($missendeThreads)) {
+        $tokenVoorOnderwerp = haalGmailAccessTokenOp();
+        $accessTokenVoorOnderwerp = !empty($tokenVoorOnderwerp['ok']) ? (string) $tokenVoorOnderwerp['access_token'] : '';
+        if ($accessTokenVoorOnderwerp !== '') {
+            foreach (array_keys($missendeThreads) as $threadIdDb) {
+                $t = gmailApiRequest('GET', 'users/me/threads/' . rawurlencode($threadIdDb), $accessTokenVoorOnderwerp, null, [
+                    'format' => 'metadata',
+                    'metadataHeaders' => 'Subject',
+                ]);
+                if (empty($t['ok']) || !isset($t['data']['messages']) || !is_array($t['data']['messages'])) {
+                    continue;
+                }
+                $messages = $t['data']['messages'];
+                $last = end($messages);
+                if (!is_array($last) || !isset($last['payload']['headers'])) {
+                    continue;
+                }
+                $sub = haalHeaderOp($last['payload']['headers'], 'Subject');
+                $sub = is_string($sub) ? trim($sub) : '';
+                if ($sub === '') {
+                    continue;
+                }
+                $onderwerpCache[$threadIdDb] = $sub;
+                try {
+                    zorgEmailConceptenAliasKolommen($conn);
+                    $upd = $conn->prepare("UPDATE email_concepten SET onderwerp = :o WHERE gmail_thread_id = :t AND (onderwerp IS NULL OR onderwerp = '')");
+                    $upd->execute([
+                        ':o' => $sub,
+                        ':t' => $threadIdDb,
+                    ]);
+                } catch (Throwable) {
+                }
+            }
+        }
+    }
+
     $lijstHtml .= '<div style="padding:10px; max-height: var(--list-max-h); overflow:auto;">';
     foreach ($rows as $r) {
         $isActief = ($id > 0 && (int) $r['id'] === (int) $id);
         $bg = $isActief ? '#bfdbfe' : '#e5e7eb';
         $border = $isActief ? '#60a5fa' : '#9ca3af';
         $onderwerp = isset($r['onderwerp']) ? trim((string) $r['onderwerp']) : '';
+        if ($onderwerp === '') {
+            $threadId = isset($r['gmail_thread_id']) ? (string) $r['gmail_thread_id'] : '';
+            if ($threadId !== '' && isset($onderwerpCache[$threadId])) {
+                $onderwerp = (string) $onderwerpCache[$threadId];
+            }
+        }
         $titelLinks = $onderwerp !== '' ? $onderwerp : ('Concept #' . (string) $r['id']);
         if (strlen($titelLinks) > 90) {
             $titelLinks = substr($titelLinks, 0, 90) . '...';
