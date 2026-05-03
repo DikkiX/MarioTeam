@@ -1424,8 +1424,14 @@ function runEmailSyncOnce($conn, $maxResults = 5)
     };
     $aliassen = [];
     try {
+        $backfillOnderwerpen(50);
+    } catch (Throwable) {
+    }
+
+    try {
         $aliassen = haalEmailAliassen($conn);
     } catch (Throwable) {
+        $aliassen = [];
         $aliassen = [];
     }
     $aliasEmails = [];
@@ -1538,11 +1544,6 @@ function runEmailSyncOnce($conn, $maxResults = 5)
             'removeLabelIds' => ['UNREAD'],
         ]);
         $aantalNieuwe++;
-    }
-
-    try {
-        $backfillOnderwerpen(20);
-    } catch (Throwable) {
     }
 
     return ['ok' => true, 'new' => $aantalNieuwe, 'error' => ''];
