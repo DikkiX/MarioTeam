@@ -512,6 +512,40 @@ function gmailApiRequest($method, $path, $accessToken, $body = null, $query = []
     return ['ok' => true, 'status' => $status, 'data' => $data];
 }
 
+function gmailZorgLabelId($accessToken, $labelNaam)
+{
+    // We gebruiken een Gmail label om te onthouden dat we al een concept hebben gemaakt.
+    // Zo kunnen mails ongeopend blijven, maar worden ze niet steeds opnieuw verwerkt.
+    $labelNaam = trim((string) $labelNaam);
+    if ($labelNaam === '') {
+        return '';
+    }
+
+    $lijst = gmailApiRequest('GET', 'users/me/labels', $accessToken);
+    if (!empty($lijst['ok']) && isset($lijst['data']['labels']) && is_array($lijst['data']['labels'])) {
+        foreach ($lijst['data']['labels'] as $l) {
+            if (!is_array($l)) {
+                continue;
+            }
+            $name = isset($l['name']) ? (string) $l['name'] : '';
+            if ($name === $labelNaam) {
+                return isset($l['id']) ? (string) $l['id'] : '';
+            }
+        }
+    }
+
+    $maak = gmailApiRequest('POST', 'users/me/labels', $accessToken, [
+        'name' => $labelNaam,
+        'labelListVisibility' => 'labelShow',
+        'messageListVisibility' => 'show',
+    ]);
+    if (!empty($maak['ok']) && isset($maak['data']['id'])) {
+        return (string) $maak['data']['id'];
+    }
+
+    return '';
+}
+
 function base64UrlDecode($data)
 {
     // Gmail gebruikt base64url encoding voor inhoud.
@@ -1355,6 +1389,11 @@ function runEmailSyncOnce($conn, $maxResults = 5)
 
     $accessToken = (string) $token['access_token'];
 
+    // We willen dat mails ongeopend blijven tot er echt gereageerd is.
+    // Daarom zetten we ze niet op "gelezen", maar geven we ze een label als we ze verwerkt hebben.
+    $aiLabelNaam = 'AI_CONCEPT';
+    $aiLabelId = gmailZorgLabelId($accessToken, $aiLabelNaam);
+
     $backfillOnderwerpen = function ($limit) use ($conn, $accessToken) {
         try {
             zorgEmailConceptenAliasKolommen($conn);
@@ -1454,7 +1493,7 @@ function runEmailSyncOnce($conn, $maxResults = 5)
     $aantalNieuwe = 0;
     $lijst = gmailApiRequest('GET', 'users/me/messages', $accessToken, null, [
         'labelIds' => 'INBOX',
-        'q' => 'is:unread',
+        'q' => 'is:unread -label:' . $aiLabelNaam,
         'maxResults' => $maxResults,
     ]);
 
@@ -1501,16 +1540,20 @@ function runEmailSyncOnce($conn, $maxResults = 5)
 
         $rulesResult = verwerkEmailRulesVoorMail($actieveRegels, $from, $subject);
         if (!empty($rulesResult['ignore'])) {
-            gmailApiRequest('POST', 'users/me/messages/' . rawurlencode($msgId) . '/modify', $accessToken, [
-                'removeLabelIds' => ['UNREAD'],
-            ]);
+            if ($aiLabelId !== '') {
+                gmailApiRequest('POST', 'users/me/messages/' . rawurlencode($msgId) . '/modify', $accessToken, [
+                    'addLabelIds' => [$aiLabelId],
+                ]);
+            }
             continue;
         }
 
         if (bestaatEmailConceptVoorThread($conn, $threadId)) {
-            gmailApiRequest('POST', 'users/me/messages/' . rawurlencode($msgId) . '/modify', $accessToken, [
-                'removeLabelIds' => ['UNREAD'],
-            ]);
+            if ($aiLabelId !== '') {
+                gmailApiRequest('POST', 'users/me/messages/' . rawurlencode($msgId) . '/modify', $accessToken, [
+                    'addLabelIds' => [$aiLabelId],
+                ]);
+            }
             continue;
         }
 
@@ -1540,9 +1583,11 @@ function runEmailSyncOnce($conn, $maxResults = 5)
         }
 
         voegEmailConceptToe($conn, $threadId, $klantEmail, $conceptTekst, $ontvangerEmail, $afzenderAlias, $subject);
-        gmailApiRequest('POST', 'users/me/messages/' . rawurlencode($msgId) . '/modify', $accessToken, [
-            'removeLabelIds' => ['UNREAD'],
-        ]);
+        if ($aiLabelId !== '') {
+            gmailApiRequest('POST', 'users/me/messages/' . rawurlencode($msgId) . '/modify', $accessToken, [
+                'addLabelIds' => [$aiLabelId],
+            ]);
+        }
         $aantalNieuwe++;
     }
 
@@ -1999,6 +2044,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         $upd->execute([
                             ':tekst' => $nieuweTekst,
                             ':id' => $conceptId,
+                        ]);
+                        // Pas na echt versturen zetten we de Gmail conversatie op "gelezen".
+                        gmailApiRequest('POST', 'users/me/threads/' . rawurlencode($threadId) . '/modify', $accessToken, [
+                            'removeLabelIds' => ['UNREAD'],
                         ]);
                         $_SESSION['email_dashboard_flash'] = [
                             'type' => 'ok',
