@@ -1493,7 +1493,10 @@ function runEmailSyncOnce($conn, $maxResults = 5)
     $aantalNieuwe = 0;
     $lijst = gmailApiRequest('GET', 'users/me/messages', $accessToken, null, [
         'labelIds' => 'INBOX',
-        'q' => 'is:unread -label:' . $aiLabelNaam,
+        // We halen alle ongelezen inbox mails op.
+        // We filteren niet op label in de zoekopdracht, omdat Gmail per conversatie zoekt.
+        // Anders missen we nieuwe reacties in een conversatie die eerder al het AI label kreeg.
+        'q' => 'is:unread',
         'maxResults' => $maxResults,
     ]);
 
@@ -1521,6 +1524,11 @@ function runEmailSyncOnce($conn, $maxResults = 5)
         }
 
         $data = $detail['data'] ?? [];
+        $labelIds = (isset($data['labelIds']) && is_array($data['labelIds'])) ? $data['labelIds'] : [];
+        // Als deze mail al eerder door ons is verwerkt, slaan we hem over.
+        if ($aiLabelId !== '' && in_array($aiLabelId, $labelIds, true)) {
+            continue;
+        }
         $threadId = isset($data['threadId']) ? (string) $data['threadId'] : '';
         $payload = $data['payload'] ?? [];
         $headers = is_array($payload) && isset($payload['headers']) ? $payload['headers'] : [];
@@ -1549,6 +1557,21 @@ function runEmailSyncOnce($conn, $maxResults = 5)
         }
 
         if (bestaatEmailConceptVoorThread($conn, $threadId)) {
+            // Er is al een concept voor deze conversatie.
+            // We updaten de datum zodat hij weer bovenaan komt in de lijst.
+            try {
+                $upd = $conn->prepare("
+                    UPDATE email_concepten
+                    SET onderwerp = CASE WHEN (onderwerp IS NULL OR onderwerp = '') THEN :o ELSE onderwerp END
+                    WHERE gmail_thread_id = :t
+                    LIMIT 1
+                ");
+                $upd->execute([
+                    ':o' => (string) $subject,
+                    ':t' => (string) $threadId,
+                ]);
+            } catch (Throwable) {
+            }
             if ($aiLabelId !== '') {
                 gmailApiRequest('POST', 'users/me/messages/' . rawurlencode($msgId) . '/modify', $accessToken, [
                     'addLabelIds' => [$aiLabelId],
@@ -2336,7 +2359,7 @@ if (empty($_GET['email_worker'])) {
     }
 }
 
-$stmt = $conn->prepare("SELECT id, gmail_thread_id, klant_email, onderwerp, created_at FROM email_concepten WHERE status = 'draft' ORDER BY created_at DESC");
+$stmt = $conn->prepare("SELECT id, gmail_thread_id, klant_email, onderwerp, created_at, updated_at FROM email_concepten WHERE status = 'draft' ORDER BY updated_at DESC");
 $stmt->execute();
 $rows = $stmt->fetchAll();
 
@@ -2424,7 +2447,8 @@ if (empty($rows)) {
         }
         $lijstHtml .= '<a href="/EmailDashboard.php?id=' . urlencode((string) $r['id']) . '" style="display:block; text-decoration:none; border:1px solid ' . $border . '; background:' . $bg . '; border-radius:12px; padding:10px 12px; margin-bottom:10px;">';
         $lijstHtml .= '<div style="font-weight:800; color:#111827;">' . e($titelLinks) . '</div>';
-        $lijstHtml .= '<div style="margin-top:4px; color:#111827; font-size:13px;">Datum: ' . e($r['created_at']) . '</div>';
+        $laatste = isset($r['updated_at']) ? (string) $r['updated_at'] : (string) $r['created_at'];
+        $lijstHtml .= '<div style="margin-top:4px; color:#111827; font-size:13px;">Laatste: ' . e($laatste) . '</div>';
         $lijstHtml .= '<div style="margin-top:2px; color:#111827; font-size:13px;">Status: draft</div>';
         $lijstHtml .= '<div style="margin-top:2px; color:#111827; font-size:13px;">Klant: ' . e($r['klant_email']) . '</div>';
         $lijstHtml .= '</a>';
