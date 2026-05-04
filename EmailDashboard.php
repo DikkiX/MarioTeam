@@ -2395,6 +2395,32 @@ try {
     $melding = 'Zoeken is nu even niet gelukt.';
 }
 
+// Regels werken ook voor de bestaande lijst:
+// Als er een regel is met "Negeer deze e-mail", dan verbergen we die ook in het overzicht.
+$actieveRegels = [];
+try {
+    $actieveRegels = haalActieveEmailRules($conn);
+} catch (Throwable) {
+    $actieveRegels = [];
+}
+
+if (is_array($actieveRegels) && !empty($actieveRegels) && is_array($rows) && !empty($rows)) {
+    $gefilterd = [];
+    foreach ($rows as $r) {
+        if (!is_array($r)) {
+            continue;
+        }
+        $from = isset($r['klant_email']) ? (string) $r['klant_email'] : '';
+        $subject = isset($r['onderwerp']) ? (string) $r['onderwerp'] : '';
+        $res = verwerkEmailRulesVoorMail($actieveRegels, $from, $subject);
+        if (!empty($res['ignore'])) {
+            continue;
+        }
+        $gefilterd[] = $r;
+    }
+    $rows = $gefilterd;
+}
+
 $concept = null;
 if ($id > 0) {
     // We openen 1 concept uit de lijst (rechts in beeld).
@@ -2406,6 +2432,19 @@ if ($id > 0) {
         $meldingType = 'error';
         $melding = 'Concept niet gevonden.';
         $id = 0;
+    } else {
+        // Als er een "negeer" regel is, verbergen we dit concept ook als iemand de link direct opent.
+        if (is_array($actieveRegels) && !empty($actieveRegels)) {
+            $from = isset($concept['klant_email']) ? (string) $concept['klant_email'] : '';
+            $subject = isset($concept['onderwerp']) ? (string) $concept['onderwerp'] : '';
+            $res = verwerkEmailRulesVoorMail($actieveRegels, $from, $subject);
+            if (!empty($res['ignore'])) {
+                $concept = null;
+                $meldingType = 'error';
+                $melding = 'Dit concept is verborgen door een regel.';
+                $id = 0;
+            }
+        }
     }
 }
 
