@@ -2421,19 +2421,6 @@ $lijstHtml .= '<input id="emailZoekbalk" type="text" name="q" value="' . e($zoek
 $lijstHtml .= '<button type="submit" style="background:#60a5fa; border:1px solid #3b82f6; color:#111827; font-weight:800; padding:10px 14px; border-radius:10px; cursor:pointer;">Zoek</button>';
 $lijstHtml .= '<button type="button" onclick="(function(){var i=document.getElementById(\'emailZoekbalk\'); if(i){i.value=\'\';} var f=i && i.form ? i.form : null; if(f){f.submit();}})()" style="background:#e5e7eb; border:1px solid #9ca3af; color:#111827; font-weight:800; padding:10px 14px; border-radius:10px; cursor:pointer;">Wissen</button>';
 $lijstHtml .= '</form>';
-$lijstHtml .= '<script>
-(function(){
-    var input = document.getElementById("emailZoekbalk");
-    if (!input) { return; }
-    var t = null;
-    input.addEventListener("input", function(){
-        if (t) { clearTimeout(t); }
-        t = setTimeout(function(){
-            if (input.form) { input.form.submit(); }
-        }, 250);
-    });
-})();
-</script>';
 $lijstHtml .= '</div>';
 $lijstHtml .= '</div>';
 if (empty($rows)) {
