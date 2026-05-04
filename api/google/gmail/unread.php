@@ -3,7 +3,6 @@ include_once $_SERVER['DOCUMENT_ROOT'] . '/include/env.php';
 
 session_start();
 
-// Dit is een testpagina voor US11.
 // Doel: laten zien dat we met de officiële Gmail API kunnen inloggen en mails kunnen lezen.
 // Wat je op het scherm ziet:
 // - From = wie het heeft gestuurd
@@ -569,9 +568,9 @@ function gmailApiRequest($method, $path, $accessToken, $query = [])
     return ['ok' => true, 'status' => $status, 'data' => $data];
 }
 
-// =========================
-// Concept helpers
-// =========================
+
+// Concept helpers:
+
 // Deze functies maken van een klantmail een concept-antwoord met OpenAI.
 // Daarna slaan we dat concept op in de database als 'draft' (concept).
 // Dat doen we alleen als je ?generate=1 in de URL zet.

@@ -2090,6 +2090,13 @@ $settings = isset($_GET['settings']) && (string) $_GET['settings'] === '1';
 $settingsTab = isset($_GET['tab']) ? (string) $_GET['tab'] : 'tone';
 $csrf = csrfToken();
 
+// Dit is de tekst die je typt in de zoekbalk.
+// Als dit leeg is, laten we gewoon alles zien.
+$zoekTerm = isset($_GET['q']) ? trim((string) $_GET['q']) : '';
+if (strlen($zoekTerm) > 200) {
+    $zoekTerm = substr($zoekTerm, 0, 200);
+}
+
 function renderLayout($titel, $contentHtml, $melding, $meldingType)
 {
     // Centrale layout (bovenbalk + melding + content).
@@ -2359,8 +2366,23 @@ if (empty($_GET['email_worker'])) {
     }
 }
 
-$stmt = $conn->prepare("SELECT id, gmail_thread_id, klant_email, onderwerp, created_at, updated_at FROM email_concepten WHERE status = 'draft' ORDER BY updated_at DESC");
-$stmt->execute();
+// We halen de lijst uit de database (snel).
+// Als er een zoekterm is, filteren we op: klant e-mail, onderwerp en tekst.
+$params = [];
+$sql = "SELECT id, gmail_thread_id, klant_email, onderwerp, status, created_at, updated_at
+        FROM email_concepten
+        WHERE status IN ('draft','sent','error')";
+if ($zoekTerm !== '') {
+    $sql .= " AND (
+                klant_email LIKE :q
+                OR onderwerp LIKE :q
+                OR concept_tekst LIKE :q
+            )";
+    $params[':q'] = '%' . $zoekTerm . '%';
+}
+$sql .= " ORDER BY updated_at DESC LIMIT 300";
+$stmt = $conn->prepare($sql);
+$stmt->execute($params);
 $rows = $stmt->fetchAll();
 
 $concept = null;
@@ -2378,9 +2400,39 @@ if ($id > 0) {
 }
 
 $lijstHtml = '<div style="background:#f3f4f6; border:1px solid #9ca3af; border-radius:14px; overflow:hidden;">';
-$lijstHtml .= '<div style="padding:12px 14px; border-bottom:1px solid #9ca3af; font-weight:800;">Openstaande Concepten (Lijst)</div>';
+$lijstHtml .= '<div style="padding:12px 14px; border-bottom:1px solid #9ca3af;">';
+$lijstHtml .= '<div style="font-weight:800;">E-mails (Lijst)</div>';
+$lijstHtml .= '<div style="margin-top:8px;">';
+$lijstHtml .= '<form method="get" action="/EmailDashboard.php" style="display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin:0;">';
+if ($id > 0) {
+    $lijstHtml .= '<input type="hidden" name="id" value="' . e((string) $id) . '">';
+}
+$lijstHtml .= '<input id="emailZoekbalk" type="text" name="q" value="' . e($zoekTerm) . '" placeholder="Zoek op e-mail, onderwerp, bestelnummer..." style="flex:1 1 220px; min-width:220px; box-sizing:border-box; border-radius:10px; border:1px solid #9ca3af; background:#ffffff; color:#111827; padding:10px 12px;">';
+$lijstHtml .= '<button type="submit" style="background:#60a5fa; border:1px solid #3b82f6; color:#111827; font-weight:800; padding:10px 14px; border-radius:10px; cursor:pointer;">Zoek</button>';
+$lijstHtml .= '<button type="button" onclick="(function(){var i=document.getElementById(\'emailZoekbalk\'); if(i){i.value=\'\';} var f=i && i.form ? i.form : null; if(f){f.submit();}})()" style="background:#e5e7eb; border:1px solid #9ca3af; color:#111827; font-weight:800; padding:10px 14px; border-radius:10px; cursor:pointer;">Wissen</button>';
+$lijstHtml .= '</form>';
+$lijstHtml .= '<script>
+(function(){
+    var input = document.getElementById("emailZoekbalk");
+    if (!input) { return; }
+    var t = null;
+    input.addEventListener("input", function(){
+        if (t) { clearTimeout(t); }
+        t = setTimeout(function(){
+            if (input.form) { input.form.submit(); }
+        }, 250);
+    });
+})();
+</script>';
+$lijstHtml .= '</div>';
+$lijstHtml .= '</div>';
 if (empty($rows)) {
-    $lijstHtml .= '<div style="padding:14px; color:#6b7280;">Geen draft concepten gevonden.</div>';
+    // We laten een korte melding zien als er niks gevonden is.
+    if ($zoekTerm !== '') {
+        $lijstHtml .= '<div style="padding:14px; color:#6b7280;">Geen e-mails gevonden.</div>';
+    } else {
+        $lijstHtml .= '<div style="padding:14px; color:#6b7280;">Geen e-mails gevonden.</div>';
+    }
 } else {
     // Als er nog concepten zonder onderwerp zijn, halen we de onderwerpen op uit Gmail.
     // Zodra ze opgeslagen zijn, komt de lijst weer volledig uit de database.
@@ -2445,11 +2497,17 @@ if (empty($rows)) {
         if (strlen($titelLinks) > 90) {
             $titelLinks = substr($titelLinks, 0, 90) . '...';
         }
-        $lijstHtml .= '<a href="/EmailDashboard.php?id=' . urlencode((string) $r['id']) . '" style="display:block; text-decoration:none; border:1px solid ' . $border . '; background:' . $bg . '; border-radius:12px; padding:10px 12px; margin-bottom:10px;">';
+        $url = '/EmailDashboard.php?id=' . urlencode((string) $r['id']);
+        if ($zoekTerm !== '') {
+            $url .= '&q=' . urlencode($zoekTerm);
+        }
+        $lijstHtml .= '<a href="' . e($url) . '" style="display:block; text-decoration:none; border:1px solid ' . $border . '; background:' . $bg . '; border-radius:12px; padding:10px 12px; margin-bottom:10px;">';
         $lijstHtml .= '<div style="font-weight:800; color:#111827;">' . e($titelLinks) . '</div>';
         $laatste = isset($r['updated_at']) ? (string) $r['updated_at'] : (string) $r['created_at'];
         $lijstHtml .= '<div style="margin-top:4px; color:#111827; font-size:13px;">Laatste: ' . e($laatste) . '</div>';
-        $lijstHtml .= '<div style="margin-top:2px; color:#111827; font-size:13px;">Status: draft</div>';
+        $status = isset($r['status']) ? (string) $r['status'] : 'draft';
+        $statusTekst = $status === 'sent' ? 'afgehandeld' : ($status === 'error' ? 'fout' : 'concept');
+        $lijstHtml .= '<div style="margin-top:2px; color:#111827; font-size:13px;">Status: ' . e($statusTekst) . '</div>';
         $lijstHtml .= '<div style="margin-top:2px; color:#111827; font-size:13px;">Klant: ' . e($r['klant_email']) . '</div>';
         $lijstHtml .= '</a>';
     }
