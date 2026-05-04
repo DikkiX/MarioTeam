@@ -403,12 +403,19 @@ header('X-Robots-Tag: noindex, nofollow', true);
             $stmt->execute(array($cookie_value));
             $chatHistoryResult = $stmt->fetch();
 
-            $conversationHTML = $chatHistoryResult['conversationHTML'];
-            echo $conversationHTML;
-        } else
+            if ($chatHistoryResult && isset($chatHistoryResult['conversationHTML'])) {
+                $conversationHTML = $chatHistoryResult['conversationHTML'];
+                echo $conversationHTML;
+            } else {
+                echo  "<div class='chat-message system'>
+                <p>Nieuw: Aankoophulp, kletsen over games en antwoord op je vragen! <span class='message-time'>" . date("H:i") . "</span></p>
+            </div>";
+            }
+        } else {
             echo  "<div class='chat-message system'>
             <p>Nieuw: Aankoophulp, kletsen over games en antwoord op je vragen! <span class='message-time'>" . date("H:i") . "</span></p>
         </div>";
+        }
         ?>
     </div>
 
