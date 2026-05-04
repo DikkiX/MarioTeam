@@ -2374,16 +2374,26 @@ $sql = "SELECT id, gmail_thread_id, klant_email, onderwerp, status, created_at, 
         WHERE status IN ('draft','sent','error')";
 if ($zoekTerm !== '') {
     $sql .= " AND (
-                klant_email LIKE :q
-                OR onderwerp LIKE :q
-                OR concept_tekst LIKE :q
+                klant_email LIKE :q1
+                OR onderwerp LIKE :q2
+                OR concept_tekst LIKE :q3
             )";
-    $params[':q'] = '%' . $zoekTerm . '%';
+    $q = '%' . $zoekTerm . '%';
+    $params[':q1'] = $q;
+    $params[':q2'] = $q;
+    $params[':q3'] = $q;
 }
 $sql .= " ORDER BY updated_at DESC LIMIT 300";
-$stmt = $conn->prepare($sql);
-$stmt->execute($params);
-$rows = $stmt->fetchAll();
+$rows = [];
+try {
+    $stmt = $conn->prepare($sql);
+    $stmt->execute($params);
+    $rows = $stmt->fetchAll();
+} catch (Throwable) {
+    $rows = [];
+    $meldingType = 'error';
+    $melding = 'Zoeken is nu even niet gelukt.';
+}
 
 $concept = null;
 if ($id > 0) {
