@@ -2369,9 +2369,9 @@ if (empty($_GET['email_worker'])) {
 // We halen de lijst uit de database (snel).
 // Als er een zoekterm is, filteren we op: klant e-mail, onderwerp en tekst.
 $params = [];
-$sql = "SELECT id, gmail_thread_id, klant_email, onderwerp, status, created_at, updated_at
+$sql = "SELECT id, gmail_thread_id, klant_email, onderwerp, created_at, updated_at
         FROM email_concepten
-        WHERE status IN ('draft','sent','error')";
+        WHERE status = 'draft'";
 if ($zoekTerm !== '') {
     $sql .= " AND (
                 klant_email LIKE :q1
@@ -2411,7 +2411,7 @@ if ($id > 0) {
 
 $lijstHtml = '<div style="background:#f3f4f6; border:1px solid #9ca3af; border-radius:14px; overflow:hidden;">';
 $lijstHtml .= '<div style="padding:12px 14px; border-bottom:1px solid #9ca3af;">';
-$lijstHtml .= '<div style="font-weight:800;">E-mails (Lijst)</div>';
+$lijstHtml .= '<div style="font-weight:800;">Openstaande Concepten (Lijst)</div>';
 $lijstHtml .= '<div style="margin-top:8px;">';
 $lijstHtml .= '<form method="get" action="/EmailDashboard.php" style="display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin:0;">';
 if ($id > 0) {
@@ -2426,9 +2426,9 @@ $lijstHtml .= '</div>';
 if (empty($rows)) {
     // We laten een korte melding zien als er niks gevonden is.
     if ($zoekTerm !== '') {
-        $lijstHtml .= '<div style="padding:14px; color:#6b7280;">Geen e-mails gevonden.</div>';
+        $lijstHtml .= '<div style="padding:14px; color:#6b7280;">Geen concepten gevonden.</div>';
     } else {
-        $lijstHtml .= '<div style="padding:14px; color:#6b7280;">Geen e-mails gevonden.</div>';
+        $lijstHtml .= '<div style="padding:14px; color:#6b7280;">Geen concepten gevonden.</div>';
     }
 } else {
     // Als er nog concepten zonder onderwerp zijn, halen we de onderwerpen op uit Gmail.
@@ -2502,9 +2502,7 @@ if (empty($rows)) {
         $lijstHtml .= '<div style="font-weight:800; color:#111827;">' . e($titelLinks) . '</div>';
         $laatste = isset($r['updated_at']) ? (string) $r['updated_at'] : (string) $r['created_at'];
         $lijstHtml .= '<div style="margin-top:4px; color:#111827; font-size:13px;">Laatste: ' . e($laatste) . '</div>';
-        $status = isset($r['status']) ? (string) $r['status'] : 'draft';
-        $statusTekst = $status === 'sent' ? 'afgehandeld' : ($status === 'error' ? 'fout' : 'concept');
-        $lijstHtml .= '<div style="margin-top:2px; color:#111827; font-size:13px;">Status: ' . e($statusTekst) . '</div>';
+        $lijstHtml .= '<div style="margin-top:2px; color:#111827; font-size:13px;">Status: concept</div>';
         $lijstHtml .= '<div style="margin-top:2px; color:#111827; font-size:13px;">Klant: ' . e($r['klant_email']) . '</div>';
         $lijstHtml .= '</a>';
     }
