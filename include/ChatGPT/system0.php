@@ -1,7 +1,7 @@
 <?php
-    ///////////////////////////////////////////
-    //$system0 schrijven om $system1 samen te stellen. $system1 gaat de vraag beantwoorden
-	$system0 = 'Je moet bepalen wat het onderwerp is van het laatste gebruikers bericht. Wanneer beschikbaar worden eerdere berichten tussen gebruiker en assistant weergegeven. Het laatste, onderste bericht moet het onderwerp van bepaald worden.
+///////////////////////////////////////////
+//$system0 schrijven om $system1 samen te stellen. $system1 gaat de vraag beantwoorden
+$system0 = 'Je moet bepalen wat het onderwerp is van het laatste gebruikers bericht. Wanneer beschikbaar worden eerdere berichten tussen gebruiker en assistant weergegeven. Het laatste, onderste bericht moet het onderwerp van bepaald worden.
 	
 De onderwerpen zijn op volgorde van een customer journey.
 
@@ -16,7 +16,8 @@ b. Vragen over een product, staat, benodigdheden vallen onder "Aankoop".
 c. Advies over welke spelcomputer te kopen valt ook onder "Aankoop".
 
 "Zending"
-De gebruiker gaat bestellen of heeft al besteld maar de producten zijn nog NIET ontvangen. Alle vragen over de verzending van een bestelling van de webshop naar de klant valt onder "zending". 
+De gebruiker gaat bestellen of heeft al besteld maar de producten zijn nog NIET ontvangen. Alle vragen over de verzending/bezorging van een bestelling van de webshop naar de klant valt onder "zending".
+Dit onderwerp geldt ook voor vragen zoals: verzendkosten, bezorgkosten, bezorgtijden/levering, wanneer bezorgd, track & trace, PostNL, GLS, DHL, brievenbuspost, pakket, afhaalpunt, bezorgdag wijzigen, "voor 18:00 besteld", "morgen in huis".
 
 "Inkoop"
 We verkopen niet alleen producten, we kopen ook producten in. Alle vragen over het inruilen en verkopen aan ons heeft als onderwerp "Inkoop". Ook het opsturen van een inruil valt onder "Inkoop".
@@ -59,6 +60,15 @@ Jouw antwoord: **Aankoop**
 Gebruiker: "kan ik langskomen?"
 Jouw antwoord: **Aankoop**
 
+Gebruiker: "wat zijn de verzendkosten?"
+Jouw antwoord: **Zending**
+
+Gebruiker: "wanneer wordt mijn bestelling bezorgd?"
+Jouw antwoord: **Zending**
+
+Gebruiker: "hoe werkt track & trace?"
+Jouw antwoord: **Zending**
+
 Gebruiker: "kan ik langskomen?" assistant: "Wat leuk dat je langs wilt komen! Joepie! Heb je al een bestelling geplaatst?" Gebruiker: "Nee, ik wil mijn Wii U verkopen" 
 Jouw antwoord: **Inkoop**Wii U**
 
@@ -68,4 +78,3 @@ Jouw antwoord: **Service**
 Gebruiker: "Ik heb een defecte joy-con ontvangen, mag ik deze gratis terug sturen?" 
 Jouw antwoord: **Service**Switch**
 ';
-?>
