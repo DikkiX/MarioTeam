@@ -17,12 +17,10 @@ function CHATGPT($input, $systemContent, $temperature = 1, $model = "gpt-5-mini"
         $model = "gpt-5.2";
     elseif ($model == 2) //prijs technisch beste model
     {
-        $temperature = 1;
         $model = "gpt-5-mini";
         //$model = "gpt-4.1-mini";
     } elseif ($model == 3) //gpt-5 nog altijd erg traag
     {
-        $temperature = 1;
         $model = "gpt-4.1-mini";
     }
     $endpoint = 'https://api.openai.com/v1/chat/completions'; // Juiste API-eindpunt voor chat/completions
