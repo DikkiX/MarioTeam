@@ -207,9 +207,9 @@ function roepOpenAiAan($messages, $tools = [], $toolChoice = 'auto')
 
     // Model keuze zoals in ChatFunction.php:
     // CHAT_MODEL_MODE = 1 (duurste), 2 (prijs/kwaliteit), 3 (snel).
-    // Default is 3.
+    // Default is 2 zodat de worker standaard hetzelfde gedrag heeft als ChatFunction (gpt-5-mini).
     $temperature = 0.2;
-    $model = 3;
+    $model = 2;
     if (function_exists('getProjectEnvValue')) {
         $mode = getProjectEnvValue('CHAT_MODEL_MODE');
         if (is_string($mode) && preg_match('/^\d+$/', $mode) === 1) {
@@ -287,7 +287,7 @@ function roepOpenAiAanZonderTone($messages, $tools = [], $toolChoice = 'auto', $
     // Zelfde model keuze als roepOpenAiAan(), maar zonder extra dashboard tone-of-voice.
     // Dit is bedoeld voor system0 (onderwerp bepalen).
     $temperature = 0.2;
-    $model = 3;
+    $model = 2;
     if (function_exists('getProjectEnvValue')) {
         $mode = getProjectEnvValue('CHAT_MODEL_MODE');
         if (is_string($mode) && preg_match('/^\d+$/', $mode) === 1) {
