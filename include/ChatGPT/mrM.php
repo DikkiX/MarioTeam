@@ -1,4 +1,9 @@
 <?php
+$univ_web = isset($univ_web) ? (string) $univ_web : '';
+$univ_nin = isset($univ_nin) ? (string) $univ_nin : '';
+$univ_web_text = isset($univ_web_text) ? (string) $univ_web_text : '';
+$univ_one = isset($univ_one) ? (string) $univ_one : '';
+
 $uitroepA[1] = "... en dat maakt mij super vrolijk!";
 $uitroepA[2] = "... en dat maakt mij super blij!";
 $uitroepA[3] = "... en dat geeft mij veel plezier!";

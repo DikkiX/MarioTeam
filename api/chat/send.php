@@ -1,19 +1,28 @@
 <?php
 include_once $_SERVER['DOCUMENT_ROOT'] . '/include/db.inc';
+$conn = isset($conn) ? $conn : null;
 
 // Dit endpoint slaat 1 chatbericht op en start daarna de worker.
 // De worker maakt het antwoord en zet dat later in de database.
 // We geven altijd JSON terug, zodat frontend of Postman dit netjes kan lezen.
 header('Content-Type: application/json; charset=utf-8');
 
-function stuurJsonResponse($httpStatus, $data)
+function stuurJsonResponse(int $httpStatus, array $data): void
 {
     http_response_code($httpStatus);
     echo json_encode($data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
     exit;
 }
 
-function zorgDashboardSettingsTabel($conn)
+if (!($conn instanceof PDO)) {
+    stuurJsonResponse(500, [
+        'status' => 'error',
+        'message' => 'Database verbinding ontbreekt.',
+    ]);
+}
+assert($conn instanceof PDO);
+
+function zorgDashboardSettingsTabel(PDO $conn): void
 {
     // Deze tabel bewaren we voor instellingen en secrets.
     $conn->exec("
@@ -26,7 +35,7 @@ function zorgDashboardSettingsTabel($conn)
     ");
 }
 
-function haalOfMaakWorkerSecret($conn)
+function haalOfMaakWorkerSecret(PDO $conn): string
 {
     // Dit is de secret die het worker endpoint beschermt.
     // Als hij nog niet bestaat, maken we hem 1 keer aan en slaan we hem op in de database.
@@ -52,7 +61,7 @@ function haalOfMaakWorkerSecret($conn)
     }
 }
 
-function triggerWorkerOpAchtergrond($berichtId)
+function triggerWorkerOpAchtergrond(int $berichtId): bool
 {
     // Start de worker zonder te wachten op een antwoord.
     // Dit houdt de chat snel, ook als OpenAI langer bezig is.

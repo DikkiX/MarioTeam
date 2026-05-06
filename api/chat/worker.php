@@ -1,9 +1,13 @@
 <?php
 include_once $_SERVER['DOCUMENT_ROOT'] . '/include/db.inc';
-
 ignore_user_abort(true);
 set_time_limit(0);
 
+
+if (!isset($conn) || !($conn instanceof PDO)) {
+    http_response_code(500);
+    exit('Database verbinding ontbreekt.');
+}
 // Dit script verwerkt de chat-wachtrij.
 // Het pakt het oudste bericht, maakt een antwoord en slaat dat op in de database.
 function schrijfWorkerLog($message)

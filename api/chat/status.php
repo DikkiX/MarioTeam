@@ -1,16 +1,25 @@
 <?php
 include_once $_SERVER['DOCUMENT_ROOT'] . '/include/db.inc';
+$conn = isset($conn) ? $conn : null;
 
 // Dit bestand wordt door de frontend gebruikt om te vragen:
 // "Is het antwoord al klaar?"
 header('Content-Type: application/json; charset=utf-8');
 
-function stuurJsonResponse($httpStatus, $data)
+function stuurJsonResponse(int $httpStatus, array $data): void
 {
     http_response_code($httpStatus);
     echo json_encode($data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
     exit;
 }
+
+if (!($conn instanceof PDO)) {
+    stuurJsonResponse(500, [
+        'status' => 'error',
+        'message' => 'Database verbinding ontbreekt.',
+    ]);
+}
+assert($conn instanceof PDO);
 
 // Dit endpoint mag alleen gelezen worden.
 if ($_SERVER['REQUEST_METHOD'] !== 'GET') {
