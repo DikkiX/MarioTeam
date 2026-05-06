@@ -1,5 +1,8 @@
 RewriteEngine On
 
+RewriteRule ^\.env$ - [F,L]
+RewriteRule ^\.env\..*$ - [F,L]
+
 # Blokkeer storage (logs/tokens) voor het web.
 RewriteRule ^storage/ - [F,L]
 
