@@ -663,6 +663,9 @@ header('X-Robots-Tag: noindex, nofollow', true);
             async function processMessage(message) {
                 const chatMessages = document.getElementById('chatMessages');
                 const sessionCookie = ensureChatSessionCookie();
+                const urlParams = new URLSearchParams(window.location.search || '');
+                const debugEnabled = urlParams.get('debug') === '1';
+                const debugKey = String(urlParams.get('k') || '');
 
                 if (message !== 'wacht op 2de bericht') {
                     chatMessages.appendChild(createMessageElement('user', message));
@@ -688,7 +691,9 @@ header('X-Robots-Tag: noindex, nofollow', true);
                         },
                         body: JSON.stringify({
                             cookie: sessionCookie,
-                            user_message: message
+                            user_message: message,
+                            debug: debugEnabled ? 1 : 0,
+                            debug_key: debugEnabled ? debugKey : ''
                         })
                     });
                     const data = await response.json();
