@@ -205,10 +205,32 @@ function roepOpenAiAan($messages, $tools = [], $toolChoice = 'auto')
         ]);
     }
 
+    $temperature = 0.2;
+    $model = 3;
+    if (function_exists('getProjectEnvValue')) {
+        $mode = getProjectEnvValue('CHAT_MODEL_MODE');
+        if (is_string($mode) && preg_match('/^\d+$/', $mode) === 1) {
+            $model = (int) $mode;
+        } elseif (is_int($mode)) {
+            $model = $mode;
+        }
+    }
+    if ($model == 1) {
+        $model = 'gpt-5.2';
+    } elseif ($model == 2) {
+        $temperature = 1;
+        $model = 'gpt-5-mini';
+    } elseif ($model == 3) {
+        $temperature = 1;
+        $model = 'gpt-4.1-mini';
+    } elseif (!is_string($model) || $model === '') {
+        $model = 'gpt-4.1-mini';
+    }
+
     $data = [
-        'model' => 'gpt-4.1-mini',
+        'model' => $model,
         'messages' => $messages,
-        'temperature' => 0.2,
+        'temperature' => $temperature,
         'max_completion_tokens' => 1200,
     ];
 
@@ -257,10 +279,32 @@ function roepOpenAiAanZonderTone($messages, $tools = [], $toolChoice = 'auto', $
         return null;
     }
 
+    $temperature = 0.2;
+    $model = 3;
+    if (function_exists('getProjectEnvValue')) {
+        $mode = getProjectEnvValue('CHAT_MODEL_MODE');
+        if (is_string($mode) && preg_match('/^\d+$/', $mode) === 1) {
+            $model = (int) $mode;
+        } elseif (is_int($mode)) {
+            $model = $mode;
+        }
+    }
+    if ($model == 1) {
+        $model = 'gpt-5.2';
+    } elseif ($model == 2) {
+        $temperature = 1;
+        $model = 'gpt-5-mini';
+    } elseif ($model == 3) {
+        $temperature = 1;
+        $model = 'gpt-4.1-mini';
+    } elseif (!is_string($model) || $model === '') {
+        $model = 'gpt-4.1-mini';
+    }
+
     $data = [
-        'model' => 'gpt-4.1-mini',
+        'model' => $model,
         'messages' => $messages,
-        'temperature' => 0.2,
+        'temperature' => $temperature,
         'max_completion_tokens' => (int) $maxTokens,
     ];
 
