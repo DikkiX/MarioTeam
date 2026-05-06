@@ -1,6 +1,5 @@
 <?php
 include_once $_SERVER['DOCUMENT_ROOT'] . '/include/db.inc';
-global $conn;
 
 // Dit endpoint slaat 1 chatbericht op en start daarna de worker.
 // De worker maakt het antwoord en zet dat later in de database.
@@ -51,49 +50,6 @@ function haalOfMaakWorkerSecret($conn)
     } catch (Throwable) {
         return '';
     }
-}
-
-function chatDebugSettingKeyVoorCookie($cookie)
-{
-    return 'chat_debug_cookie_' . sha1((string) $cookie);
-}
-
-function zetChatDebugAanVoorCookie($conn, $cookie, $ttlSec = 3600)
-{
-    try {
-        zorgDashboardSettingsTabel($conn);
-        $exp = time() + (int) $ttlSec;
-        $payload = json_encode([
-            'enabled' => 1,
-            'expires_at' => $exp,
-        ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-        if (!is_string($payload)) {
-            return false;
-        }
-        $stmt = $conn->prepare("
-            INSERT INTO dashboard_settings (setting_key, setting_value)
-            VALUES (:k, :v)
-            ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value)
-        ");
-        $stmt->execute([
-            ':k' => chatDebugSettingKeyVoorCookie($cookie),
-            ':v' => $payload,
-        ]);
-        return true;
-    } catch (Throwable) {
-        return false;
-    }
-}
-
-function isChatDebugToegestaan($debugKeyGiven)
-{
-    $expected = getProjectEnvValue('CHATBOT_DEBUG_KEY');
-    $expected = is_string($expected) ? trim($expected) : '';
-    if ($expected !== '' && is_string($debugKeyGiven) && $debugKeyGiven !== '' && hash_equals($expected, $debugKeyGiven)) {
-        return true;
-    }
-    $remote = (string) ($_SERVER['REMOTE_ADDR'] ?? '');
-    return (preg_match('/^2001:1c00:bd0e:7700:/', $remote) === 1);
 }
 
 function triggerWorkerOpAchtergrond($berichtId)
@@ -177,8 +133,6 @@ if (!is_array($payload) || json_last_error() !== JSON_ERROR_NONE) {
 // We halen alleen de twee velden op die we nodig hebben.
 $cookie = isset($payload['cookie']) ? trim((string) $payload['cookie']) : '';
 $userMessage = isset($payload['user_message']) ? trim((string) $payload['user_message']) : '';
-$debugFlag = isset($payload['debug']) ? (string) $payload['debug'] : '';
-$debugKey = isset($payload['debug_key']) ? (string) $payload['debug_key'] : '';
 
 // Zonder cookie of bericht kunnen we niets opslaan.
 if ($cookie === '' || $userMessage === '') {
@@ -189,10 +143,6 @@ if ($cookie === '' || $userMessage === '') {
 }
 
 try {
-    if ($debugFlag === '1' && isChatDebugToegestaan($debugKey)) {
-        zetChatDebugAanVoorCookie($conn, $cookie, 3600);
-    }
-
     // We slaan het bericht alleen op in de wachtrij.
     // OpenAI wordt hier dus nog niet aangeroepen.
     $sql = "INSERT INTO chat_queue (cookie, user_message) VALUES (:cookie, :user_message)";

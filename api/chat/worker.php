@@ -1,6 +1,5 @@
 <?php
 include_once $_SERVER['DOCUMENT_ROOT'] . '/include/db.inc';
-global $conn;
 
 ignore_user_abort(true);
 set_time_limit(0);
@@ -63,37 +62,6 @@ function zorgDashboardSettingsTabel($conn)
             PRIMARY KEY (`setting_key`)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
     ");
-}
-
-function chatDebugSettingKeyVoorCookie($cookie)
-{
-    return 'chat_debug_cookie_' . sha1((string) $cookie);
-}
-
-function isChatDebugActiefVoorCookie($conn, $cookie)
-{
-    try {
-        zorgDashboardSettingsTabel($conn);
-        $stmt = $conn->prepare("SELECT setting_value FROM dashboard_settings WHERE setting_key = :k LIMIT 1");
-        $stmt->execute([
-            ':k' => chatDebugSettingKeyVoorCookie($cookie),
-        ]);
-        $row = $stmt->fetch();
-        if (!$row || !isset($row['setting_value'])) {
-            return false;
-        }
-        $data = json_decode((string) $row['setting_value'], true);
-        if (!is_array($data) || empty($data['enabled'])) {
-            return false;
-        }
-        $exp = isset($data['expires_at']) ? (int) $data['expires_at'] : 0;
-        if ($exp > 0 && time() > $exp) {
-            return false;
-        }
-        return true;
-    } catch (Throwable) {
-        return false;
-    }
 }
 
 function haalOfMaakWorkerSecret($conn)
@@ -1197,7 +1165,6 @@ try {
     }
 
     $actiefBerichtId = (int) $bericht['id'];
-    $debugActief = isChatDebugActiefVoorCookie($conn, (string) ($bericht['cookie'] ?? ''));
 
     // Meteen op processing zetten voorkomt dat hetzelfde bericht twee keer gedaan wordt.
     $updateSql = "
@@ -1276,14 +1243,6 @@ try {
         $definitiefAntwoord = $tweedeAntwoord['choices'][0]['message']['content'] ?? '';
 
         if ($definitiefAntwoord !== '') {
-            if ($debugActief) {
-                $dbg = "DEBUG\n";
-                $dbg .= "REMOTE_ADDR: " . (string) ($_SERVER['REMOTE_ADDR'] ?? '') . "\n";
-                $dbg .= "tool_choice: auto\n";
-                $dbg .= "had_tool_calls: 1\n";
-                $dbg .= "messages_count: " . (string) count($messages) . "\n\n";
-                $definitiefAntwoord = $dbg . (string) $definitiefAntwoord;
-            }
             updateChatQueueBericht($conn, $actiefBerichtId, 'completed', $definitiefAntwoord);
             schrijfWorkerLog('Definitief AI-antwoord gemaakt voor bericht ' . $bericht['id'] . ' (lengte ' . strlen((string) $definitiefAntwoord) . ').');
         } else {
@@ -1296,14 +1255,6 @@ try {
         $directAntwoord = $assistantMessage['content'] ?? '';
 
         if ($directAntwoord !== '') {
-            if ($debugActief) {
-                $dbg = "DEBUG\n";
-                $dbg .= "REMOTE_ADDR: " . (string) ($_SERVER['REMOTE_ADDR'] ?? '') . "\n";
-                $dbg .= "tool_choice: " . (is_string($toolChoice) ? $toolChoice : 'auto') . "\n";
-                $dbg .= "had_tool_calls: 0\n";
-                $dbg .= "messages_count: " . (string) count($messages) . "\n\n";
-                $directAntwoord = $dbg . (string) $directAntwoord;
-            }
             updateChatQueueBericht($conn, $actiefBerichtId, 'completed', $directAntwoord);
             schrijfWorkerLog('OpenAI gaf direct antwoord zonder functie (lengte ' . strlen((string) $directAntwoord) . ').');
         } else {
