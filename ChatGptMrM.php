@@ -85,8 +85,16 @@ if (($_SERVER["REQUEST_METHOD"] == "POST") && (isset($_POST['user']))) {
     $debugKeyExpected = getProjectEnvValue('CHATBOT_DEBUG_KEY');
     $debugFlag = isset($_POST['debug']) ? (string) $_POST['debug'] : '';
     $debugKeyGiven = isset($_POST['debug_key']) ? (string) $_POST['debug_key'] : '';
-    if (is_string($debugKeyExpected) && $debugKeyExpected !== '' && $debugFlag === '1' && $debugKeyGiven !== '' && hash_equals($debugKeyExpected, $debugKeyGiven)) {
-      $debug = true;
+    if ($debugFlag === '1') {
+      if (!is_string($debugKeyExpected) || $debugKeyExpected === '') {
+        $txt = "Debug staat aan, maar CHATBOT_DEBUG_KEY ontbreekt in .env.\nREMOTE_ADDR: " . (string) ($_SERVER['REMOTE_ADDR'] ?? '');
+        echo "<div class='chat-message system'><p style='white-space:pre-wrap;'>" . htmlspecialchars($txt, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') . "<span class='message-time'>" . date("H:i") . "</span></p></div>";
+      } elseif ($debugKeyGiven === '' || !hash_equals($debugKeyExpected, $debugKeyGiven)) {
+        $txt = "Debug staat aan, maar de key klopt niet.\nREMOTE_ADDR: " . (string) ($_SERVER['REMOTE_ADDR'] ?? '');
+        echo "<div class='chat-message system'><p style='white-space:pre-wrap;'>" . htmlspecialchars($txt, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') . "<span class='message-time'>" . date("H:i") . "</span></p></div>";
+      } else {
+        $debug = true;
+      }
     }
 
     ///////////////////////////////////////////
