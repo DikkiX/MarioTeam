@@ -246,6 +246,57 @@ function roepOpenAiAan($messages, $tools = [], $toolChoice = 'auto')
     return $decoded;
 }
 
+// Dit is een "korte" OpenAI-call zonder extra dashboard tone-of-voice.
+// We gebruiken deze alleen voor system0 (onderwerp bepalen), zodat die stap snel en voorspelbaar blijft.
+function roepOpenAiAanZonderTone($messages, $tools = [], $toolChoice = 'auto', $maxTokens = 200)
+{
+    $apiKey = getProjectEnvValue('OPENAI_API_KEY');
+
+    if ($apiKey === null || $apiKey === '') {
+        schrijfWorkerLog('OpenAI key ontbreekt.');
+        return null;
+    }
+
+    $data = [
+        'model' => 'gpt-4.1-mini',
+        'messages' => $messages,
+        'temperature' => 0.2,
+        'max_completion_tokens' => (int) $maxTokens,
+    ];
+
+    if (!empty($tools)) {
+        $data['tools'] = $tools;
+        $data['tool_choice'] = $toolChoice;
+    }
+
+    $ch = curl_init('https://api.openai.com/v1/chat/completions');
+    curl_setopt($ch, CURLOPT_POST, true);
+    curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($data));
+    curl_setopt($ch, CURLOPT_HTTPHEADER, [
+        'Content-Type: application/json',
+        'Authorization: Bearer ' . $apiKey,
+    ]);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+
+    $response = curl_exec($ch);
+    $error = curl_error($ch);
+    curl_close($ch);
+
+    if ($error) {
+        schrijfWorkerLog('OpenAI fout: ' . $error);
+        return null;
+    }
+
+    $decoded = json_decode($response, true);
+
+    if (!is_array($decoded)) {
+        schrijfWorkerLog('OpenAI gaf geen geldige JSON terug.');
+        return null;
+    }
+
+    return $decoded;
+}
+
 function isVeiligeDbNaam($name)
 {
     return is_string($name) && preg_match('/^[A-Za-z0-9_]+$/', $name) === 1;
@@ -1076,17 +1127,161 @@ function haalGespreksContextOp($conn, $cookie, $actiefBerichtId, $maxBerichten =
     return $contextMessages;
 }
 
+// FAQ/contact bestanden bevatten veel HTML. De chat-UI zet HTML om naar tekst,
+// maar voor de prompt is het fijner om dit alvast naar "gewone tekst" te strippen.
+function stripHtmlNaarTekst($html)
+{
+    $t = (string) $html;
+    $t = preg_replace('/<\s*br\s*\/?\s*>/i', "\n", $t);
+    $t = preg_replace('/<\/\s*p\s*>\s*<\s*p[^>]*>/i', "\n\n", $t);
+    $t = preg_replace('/<\s*\/?p[^>]*>/i', '', $t);
+    $t = preg_replace('/<\s*li[^>]*>/i', "\n- ", $t);
+    $t = preg_replace('/<\s*\/li\s*>/i', '', $t);
+    $t = preg_replace('/<\s*\/?ul[^>]*>/i', "\n", $t);
+    $t = preg_replace('/<\s*\/?ol[^>]*>/i', "\n", $t);
+    $t = preg_replace('/<[^>]+>/', '', $t);
+    $t = html_entity_decode($t, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+    $t = str_replace("\r\n", "\n", $t);
+    $t = preg_replace("/\n{3,}/", "\n\n", $t);
+    return trim((string) $t);
+}
+
+// Dit is de  "system0" stap:
+// 1) we geven system0 + (optioneel) context + nieuwe uservraag aan OpenAI
+// 2) OpenAI geeft een korte label terug zoals: **Aankoop**Switch**
+// Daarna gebruiken we dat label om te bepalen welke FAQ files we includen.
+function haalAssistant0VoorBericht($contextMessages, $userMessage)
+{
+    include_once $_SERVER['DOCUMENT_ROOT'] . '/include/ChatGPT/system0.php';
+    $system0 = isset($system0) ? trim((string) $system0) : '';
+    if ($system0 === '') {
+        return '';
+    }
+
+    $messages = [
+        [
+            'role' => 'system',
+            'content' => $system0,
+        ],
+    ];
+
+    if (is_array($contextMessages)) {
+        foreach ($contextMessages as $m) {
+            if (isset($m['role'], $m['content'])) {
+                $messages[] = $m;
+            }
+        }
+    }
+
+    $messages[] = [
+        'role' => 'user',
+        'content' => (string) $userMessage,
+    ];
+
+    $resp = roepOpenAiAanZonderTone($messages, [], 'auto', 200);
+    if (!is_array($resp) || !isset($resp['choices'][0]['message'])) {
+        return '';
+    }
+
+    $content = $resp['choices'][0]['message']['content'] ?? '';
+    return is_string($content) ? trim($content) : '';
+}
+
+// Bepaalt platform uit system0-output (bijv. "Switch"). Als system0 geen platform geeft,
+// gebruiken we de universe fallback (bijv. $univ_one).
+function bepaalPlatformUitAssistant0($assistant0, $fallback)
+{
+    $platformArray = ["Switch", "Wii U", "3DS", "Wii", "DS", "GC", "GBA", "N64", "SNES"];
+    foreach ($platformArray as $value) {
+        if (preg_match("/$value/i", (string) $assistant0)) {
+            return $value;
+        }
+    }
+    return (string) $fallback;
+}
+
+// Bouwt de system prompt op met bestaande include-files.
+// Belangrijk: we kopiëren geen grote tekstblokken uit ChatGptMrM.php,
+// we gebruiken de bestaande FAQ arrays uit include/ChatGPT/*.php.
+function bouwSystem1MetIncludes($assistant0, $platform)
+{
+    global $univ_one, $univ_web, $univ_nin, $univ_web_text, $univ_mar, $univ_zoeken;
+
+    include_once $_SERVER['DOCUMENT_ROOT'] . '/include/ChatGPT/mrM.php';
+    $systemMrM = isset($systemMrM) ? (string) $systemMrM : '';
+    $systemMrmPersoonlijk = isset($systemMrmPersoonlijk) ? (string) $systemMrmPersoonlijk : '';
+
+    $system1 = $systemMrM;
+    if (preg_match("/Persoonlijk/i", (string) $assistant0)) {
+        $system1 .= $systemMrmPersoonlijk;
+    }
+
+    $FAQ = [];
+    if (preg_match("/Aankoop/i", (string) $assistant0) == 1) {
+        include_once $_SERVER['DOCUMENT_ROOT'] . "/include/ChatGPT/aankoop.php";
+    }
+    if (preg_match("/Zending/i", (string) $assistant0) == 1) {
+        include_once $_SERVER['DOCUMENT_ROOT'] . "/include/ChatGPT/zending.php";
+    }
+    if (preg_match("/Inkoop/i", (string) $assistant0) == 1) {
+        include_once $_SERVER['DOCUMENT_ROOT'] . "/include/ChatGPT/inkoop.php";
+    }
+    if (preg_match("/Service/i", (string) $assistant0) == 1) {
+        include_once $_SERVER['DOCUMENT_ROOT'] . "/include/ChatGPT/service.php";
+    }
+    if (preg_match("/Loyaliteit/i", (string) $assistant0) == 1) {
+        include_once $_SERVER['DOCUMENT_ROOT'] . "/include/ChatGPT/loyaliteit.php";
+    }
+
+    $FAQ = isset($FAQ) && is_array($FAQ) ? $FAQ : [];
+    if (!empty($FAQ)) {
+        $system1 .= "\n\nC. FAQ op onze website\n";
+        foreach ($FAQ as $valueArray) {
+            foreach ((array) $valueArray as $tonenSiteTextArr) {
+                if (!isset($tonenSiteTextArr['site'], $tonenSiteTextArr['text'])) {
+                    continue;
+                }
+                if (($tonenSiteTextArr['site'] == $platform) || ($tonenSiteTextArr['site'] == 'All')) {
+                    $system1 .= "\n\n" . stripHtmlNaarTekst($tonenSiteTextArr['text']);
+                }
+            }
+        }
+    }
+
+    include_once $_SERVER['DOCUMENT_ROOT'] . "/include/mijnemail_universeel.inc";
+    $bodymain3 = '';
+    include_once $_SERVER['DOCUMENT_ROOT'] . "/include/contact.inc";
+    $bodymain3 = isset($bodymain3) ? (string) $bodymain3 : '';
+    if (trim($bodymain3) !== '') {
+        $system1 .= "\n\nD. Contactgegevens\n" . stripHtmlNaarTekst($bodymain3);
+    }
+
+    return $system1;
+}
+
 // Dit maakt het gesprek voor OpenAI.
 // Eerst voegen we wat eerdere context toe en daarna de nieuwste vraag.
 function maakBerichtenVoorOpenAi($conn, $bericht)
 {
     global $univ_one, $univ_web, $univ_nin, $univ_web_text, $univ_mar, $univ_zoeken;
-    include_once $_SERVER['DOCUMENT_ROOT'] . '/include/ChatGPT/mrM.php';
 
     $basisPrompt = 'Je bent een klantenservice assistent voor MarioSwitch.nl. Als je live data nodig hebt, gebruik je een functie. Geef geen data op basis van aannames als een functie nodig is. Noem nooit exacte voorraadaantallen aan klanten. Zeg alleen of iets op voorraad is of niet. Voor orderdata moet de klant eerst zowel een bestelnummer als het juiste e-mailadres geven. Als je via zoek_bestelling artikelen terugkrijgt en artikelen_gevonden true is, presenteer die als een nette lijst met per regel: "{aantal}x {productnaam} — {prijs} euro" (als prijs bekend is). Toon daarna altijd: "Verzendkosten: X euro" en "Totaal: Y euro" op basis van resultaat.verzendkosten en resultaat.totaal. Als artikelen_gevonden false is, zeg dan dat je de artikelregels nu niet kunt ophalen (en claim niet dat er geen artikelen zijn). Voor verzenden: gebruik resultaat.verzend_status (verzonden/niet_verzonden). Als resultaat.track_code gevuld is, toon die. Als track_code leeg is, zeg dat er (nog) geen track&trace code beschikbaar is.';
 
-    // Voeg de originele Mr M tone of voice toe
-    $systemPrompt = $basisPrompt . "\n\n" . ($systemMrM ?? '');
+    // Stap 1: haal context (laatste afgeronde berichten) op uit de queue.
+    $contextMessages = haalGespreksContextOp(
+        $conn,
+        (string) ($bericht['cookie'] ?? ''),
+        (int) ($bericht['id'] ?? 0)
+    );
+
+    // Stap 2: draai system0 om onderwerp + platform te bepalen.
+    $assistant0 = haalAssistant0VoorBericht($contextMessages, (string) ($bericht['user_message'] ?? ''));
+    $platform = bepaalPlatformUitAssistant0($assistant0, isset($univ_one) ? (string) $univ_one : '');
+
+    // Stap 3: bouw system1 op met tone-of-voice + relevante FAQ/contact info.
+    // Dit zorgt dat de bot niet hoeft te gokken over bedrijfsinfo.
+    $system1 = bouwSystem1MetIncludes($assistant0, $platform);
+    $systemPrompt = $basisPrompt . "\n\n" . $system1;
 
     $messages = [
         [
@@ -1095,13 +1290,7 @@ function maakBerichtenVoorOpenAi($conn, $bericht)
         ],
     ];
 
-    // We nemen de laatste afgeronde berichten van dezelfde bezoeker mee.
-    $contextMessages = haalGespreksContextOp(
-        $conn,
-        (string) ($bericht['cookie'] ?? ''),
-        (int) ($bericht['id'] ?? 0)
-    );
-
+    // Stap 4: voeg context + nieuwe uservraag toe.
     foreach ($contextMessages as $contextMessage) {
         $messages[] = $contextMessage;
     }
