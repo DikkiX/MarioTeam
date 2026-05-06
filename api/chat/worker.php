@@ -246,6 +246,55 @@ function roepOpenAiAan($messages, $tools = [], $toolChoice = 'auto')
     return $decoded;
 }
 
+function roepOpenAiAanZonderTone($messages, $tools = [], $toolChoice = 'auto', $maxTokens = 1200)
+{
+    $apiKey = getProjectEnvValue('OPENAI_API_KEY');
+
+    if ($apiKey === null || $apiKey === '') {
+        schrijfWorkerLog('OpenAI key ontbreekt.');
+        return null;
+    }
+
+    $data = [
+        'model' => 'gpt-4.1-mini',
+        'messages' => $messages,
+        'temperature' => 0.2,
+        'max_completion_tokens' => (int) $maxTokens,
+    ];
+
+    if (!empty($tools)) {
+        $data['tools'] = $tools;
+        $data['tool_choice'] = $toolChoice;
+    }
+
+    $ch = curl_init('https://api.openai.com/v1/chat/completions');
+    curl_setopt($ch, CURLOPT_POST, true);
+    curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($data));
+    curl_setopt($ch, CURLOPT_HTTPHEADER, [
+        'Content-Type: application/json',
+        'Authorization: Bearer ' . $apiKey,
+    ]);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+
+    $response = curl_exec($ch);
+    $error = curl_error($ch);
+    curl_close($ch);
+
+    if ($error) {
+        schrijfWorkerLog('OpenAI fout: ' . $error);
+        return null;
+    }
+
+    $decoded = json_decode($response, true);
+
+    if (!is_array($decoded)) {
+        schrijfWorkerLog('OpenAI gaf geen geldige JSON terug.');
+        return null;
+    }
+
+    return $decoded;
+}
+
 function isVeiligeDbNaam($name)
 {
     return is_string($name) && preg_match('/^[A-Za-z0-9_]+$/', $name) === 1;
@@ -1076,17 +1125,227 @@ function haalGespreksContextOp($conn, $cookie, $actiefBerichtId, $maxBerichten =
     return $contextMessages;
 }
 
+function haalAssistant0VoorBericht($conn, $contextMessages, $userMessage)
+{
+    include_once $_SERVER['DOCUMENT_ROOT'] . '/include/ChatGPT/system0.php';
+    $system0 = isset($system0) ? trim((string) $system0) : '';
+    if ($system0 === '') {
+        return '';
+    }
+
+    $messages = [
+        [
+            'role' => 'system',
+            'content' => $system0,
+        ],
+    ];
+
+    if (is_array($contextMessages)) {
+        foreach ($contextMessages as $m) {
+            if (isset($m['role'], $m['content'])) {
+                $messages[] = $m;
+            }
+        }
+    }
+
+    $messages[] = [
+        'role' => 'user',
+        'content' => (string) $userMessage,
+    ];
+
+    $resp = roepOpenAiAanZonderTone($messages, [], 'auto', 200);
+    if (!is_array($resp) || !isset($resp['choices'][0]['message'])) {
+        return '';
+    }
+
+    $content = $resp['choices'][0]['message']['content'] ?? '';
+    return is_string($content) ? trim($content) : '';
+}
+
+function bouwSystem1OpBasisVanAssistant0($assistant0)
+{
+    global $univ_one, $univ_web, $univ_nin, $univ_web_text, $univ_mar, $univ_zoeken;
+    $univ_one = isset($univ_one) ? (string) $univ_one : '';
+    $univ_web = isset($univ_web) ? (string) $univ_web : '';
+    $univ_nin = isset($univ_nin) ? (string) $univ_nin : '';
+    $univ_web_text = isset($univ_web_text) ? (string) $univ_web_text : '';
+    $univ_mar = isset($univ_mar) ? (string) $univ_mar : '';
+    $univ_zoeken = isset($univ_zoeken) ? (string) $univ_zoeken : '';
+
+    include_once $_SERVER['DOCUMENT_ROOT'] . '/include/ChatGPT/mrM.php';
+    $systemMrM = isset($systemMrM) ? (string) $systemMrM : '';
+    $systemMrmPersoonlijk = isset($systemMrmPersoonlijk) ? (string) $systemMrmPersoonlijk : '';
+
+    $system1 = $systemMrM;
+
+    if (preg_match("/Persoonlijk/i", (string) $assistant0)) {
+        $system1 .= $systemMrmPersoonlijk;
+    }
+
+    $platformArray = ["Switch", "Wii U", "3DS", "Wii", "DS", "GC", "GBA", "N64", "SNES"];
+    $platform = '';
+    foreach ($platformArray as $value) {
+        if (preg_match("/$value/i", (string) $assistant0)) {
+            $platform = $value;
+            break;
+        }
+    }
+    if ($platform === '') {
+        $platform = isset($univ_one) ? (string) $univ_one : '';
+    }
+
+    if (preg_match("/ProductFinder/i", (string) $assistant0)) {
+        include_once $_SERVER['DOCUMENT_ROOT'] . "/include/ChatGPT/VerkoopAdvies3.php";
+        $systemAdviesVragen = isset($systemAdviesVragen) ? (string) $systemAdviesVragen : '';
+        $system1 .= $systemAdviesVragen;
+    }
+
+    if (preg_match("/ProductList/i", (string) $assistant0)) {
+        if (preg_match("/Switch/i", (string) $assistant0)) {
+            include_once $_SERVER['DOCUMENT_ROOT'] . "/include/ChatGPT/ProductList.php";
+            $systemList = isset($systemList) ? (string) $systemList : '';
+            $system1 .= $systemList;
+        }
+    }
+
+    if (preg_match("/Aankoop/i", (string) $assistant0) == 1) {
+        include_once $_SERVER['DOCUMENT_ROOT'] . "/include/ChatGPT/aankoop.php";
+        include_once $_SERVER['DOCUMENT_ROOT'] . "/include/time4.inc";
+        $wanneera = isset($wanneera) ? (string) $wanneera : '';
+        $system1 .= '
+<b>B. Zo werken wij</b>
+Wij staan voor Fantastisch Tweedehands. Zo mooi dat je het zonder problemen cadeau kunt geven. Goed voor het milieu, lage prijzen en erg veel keuze. Wat niet meer nieuw te koop is hebben wij wel nog op voorraad!
+
+Je kunt het gesprek eindigen met een call to action. Voor klanten binnen Nederland: ' . $wanneera . '
+';
+    }
+
+    if (preg_match("/Zending/i", (string) $assistant0) == 1) {
+        include_once $_SERVER['DOCUMENT_ROOT'] . "/include/ChatGPT/zending.php";
+    }
+
+    if (preg_match("/Inkoop/i", (string) $assistant0) == 1) {
+        include_once $_SERVER['DOCUMENT_ROOT'] . "/include/ChatGPT/inkoop.php";
+        $univ_web_s = isset($univ_web) ? (string) $univ_web : '';
+        $system1 .= '
+<b>B. Zo werken wij</b>
+Zo werken wij: Jij geeft op wat je wilt verkopen in ons inkoopsysteem (' . $univ_web_s . '/inkoop1.php). Wij laten zien wat we er voor mogen geven.
+Direct verwerken op afspraak, afgeven zonder afspraak of opsturen kan pas nadat stap 3 is doorlopen in het inkoopsysteem.
+';
+    }
+
+    if (preg_match("/Loyaliteit/i", (string) $assistant0) == 1) {
+        include_once $_SERVER['DOCUMENT_ROOT'] . "/include/ChatGPT/loyaliteit.php";
+        $univ_web_s = isset($univ_web) ? (string) $univ_web : '';
+        $univ_zoeken_s = isset($univ_zoeken) ? (string) $univ_zoeken : '';
+        $system1 .= '
+<b>B. Zo doe je het goed</b>
+Wanneer een gebruiker geintresseerd is in het Helden programma (informatie toevoegen aan product pagina\'s), probeer je de gebruiker te laten starten. Je kunt hem of haar doorverwijzen naar de zoekresultaten van een titel die de gebruiker heeft gespeeld. De zoekresultaten vind je hier: ' . $univ_web_s . '/' . $univ_zoeken_s . '?search=
+Bijvoorbeeld: Misschien wil je een beoordeling toevoegen voor <a href = "https://www.' . $univ_web_s . '/' . $univ_zoeken_s . '?search=Mario+Kart">Mario Kart</a>?
+';
+    }
+
+    if (preg_match("/Service/i", (string) $assistant0) == 1) {
+        include_once $_SERVER['DOCUMENT_ROOT'] . "/include/ChatGPT/service.php";
+        $univ_one_s = isset($univ_one) ? (string) $univ_one : '';
+        $univ_mar_s = isset($univ_mar) ? (string) $univ_mar : '';
+        $system1 .= '
+<b>B. Zo werken wij</b>
+
+Als een klant aangeeft dat een product niet werkt of wilt terug sturen proberen we eerst te achterhalen wat de reden is. Als de reden is dat het product niet goed werkt proberen we er achter te komen of de klant alles goed heeft gedaan. Door de juiste vragen te stellen en advies te bieden kunnen we het probleem vaak op afstand oplossen en zo het aantal onnodige retouren verminderen. In de FAQ hieronder vind je mogelijke oplossingen.
+
+Wanneer de reden van de klant een van de volgende is: dubbel besteld, verkeerd besteld, niet meer nodig, niet leuk, persoonlijk, etc. Geef dan ons adres aan de klant en vraag of ze het op eigen kosten terug willen sturen. Je kunt erbij zeggen dat ze dan hun volledige aankoopbedrag terug krijgen. Zorg dat de klant niet vergeet zijn gegevens bij de retour zending te vermelden.
+
+Wanneer de klant aangeeft dat het probleem niet is opgelost kun je het volgende doen om de klant te helpen. Je vraagt of je een Fantastische collega mag mailen zodat die een gratis retour zending kan aanmaken. Als de klant dat goed vindt moet hij of zij wel even zijn eigen email adres aan jou vertellen.
+
+Wanneer een gebruiker zijn email adres geeft in een bericht wordt er direct automatisch een mail gestuurd naar onze klantenservice. Die zal dan de vervolg stappen zetten om er bijvoorbeeld voor te zorgen dat de bestelling gratis retour kan worden gestuurd.
+
+Voorbeeld 1 van een goed gesprek:
+Gebruiker: Hoi, ik wil iets terug sturen, naar welk adres moet dat?
+Assistant: Fantastisch dat je even contact met me opneemt! Hebben wij iets verkeerd gedaan of is er iets stuk? Of heb je misschien per ongeluk de verkeerde game besteld? Ik help je graag verder!
+Gebruiker: De game wil niet opstarten
+Assistant: Oepsie, dat is zeker niet de bedoeling. Excuus voor het ongemak. Wat is de titel van de game? Is het voor de ' . $univ_one_s . '? Dan kan ik even kijken wat de oplossing is.<br>Misschien kunnen we het probleem samen oplossen!
+Gebruiker: Het is voor de Mario Kart voor de N64.
+Assistant: Fantastisch, laten we eens even kijken wat we kunnen doen! Zou je dit willen proberen?<br><br>[oplossingen]<br><br>Als dat niet werkt, kunnen we verder kijken naar een andere oplossing. Laat me weten of dit helpt!
+Gebruiker: Bedankt voor het wachten, het werkt helaas niet.
+Assistant: Oepsie, dat is jammer om te horen. Geen zorgen, we gaan ervoor zorgen dat je geholpen wordt! Mag ik een Fantastische collega mailen zodat we Mario Kart snel en gratis kunnen omruilen? Ik heb hiervoor wel even het emailadres nodig dat je gebruikt hebt bij het plaatsen van de bestelling. Laat maar weten of je dat wilt!
+Gebruiker: Ja graag, olyvers@gmail.com
+Assistant: Fantastisch, ik heb de email gestuurd! Mijn collega zal je snel een mail sturen om de gratis retourzending in orde te maken. Bedankt voor je geduld en als je nog meer vragen hebt, sta ik altijd klaar om te helpen!
+
+Voorbeeld 2 van een goed gesprek:
+Gebruiker: Ik wil een game terug sturen. Hoe werkt dat?
+Assistant: Fantastich dat je even contact met me opneemt. Hebben wij iets verkeerd gedaan? Is er iets stuk?
+Gebruiker: Nee, jullie zijn fantastisch! Ik heb per ongeluk het verkeerde besteld.
+Assistant: Oepsie, maar geen enkel probleem natuurlijk. Zou je het willen opsturen naar ' . $univ_mar_s . ', Pampuslaan 180, 1382 JS Weesp. Vergeet niet duidelijk de afzender te vermelden en aan te geven dat het niet stuk is, anders maken wij ons zorgen dat er wat mis mee is als het bij ons binnen komt. Heb ik je zo goed geholpen?
+
+Voorbeeld 3 van een goed gesprek:
+Gebruiker: Wat is jullie adres?
+Assistant: Fantastisch dat je even contact met me opneemt!<br>Wil je iets terug sturen? Wil je langs komen om iets op te halen?
+
+Onderstaande FAQ kan je helpen om mogelijke oplossingen te bieden voor wanneer een product niet lijkt te werken.
+';
+    }
+
+    $system1 .= '
+    <b>C. FAQ op onze website</b>';
+
+    $FAQ = isset($FAQ) && is_array($FAQ) ? $FAQ : [];
+    if (!empty($FAQ)) {
+        foreach ($FAQ as $valueArray) {
+            foreach ((array) $valueArray as $tonenSiteTextArr) {
+                if (
+                    isset($tonenSiteTextArr['site'], $tonenSiteTextArr['text'])
+                    && (($tonenSiteTextArr['site'] == $platform) || ($tonenSiteTextArr['site'] == 'All'))
+                ) {
+                    $system1 .= $tonenSiteTextArr['text'];
+                }
+            }
+        }
+    }
+
+    include_once $_SERVER['DOCUMENT_ROOT'] . "/include/mijnemail_universeel.inc";
+    $bodymain3 = '';
+    include_once $_SERVER['DOCUMENT_ROOT'] . "/include/contact.inc";
+    $bodymain3 = isset($bodymain3) ? (string) $bodymain3 : '';
+
+    $system1 .= '
+<b>D. Contact gegevens op onze website</b>
+Nooit meteen ons adres geven: De informatie bij langskomen moet eerst uitgelegd worden. Betreft een retour zending? Dan reden van retour vragen. 
+Nooit direct ons telefoonnummer of email adres geven. Eerst vragen waar het over gaat.
+
+Hieronder onze contactgegevens voor als je deze echt moet geven:
+
+' . $bodymain3 . '
+';
+
+    $dateN = date("N");
+    $maandN = date("n");
+
+    $dag = [1 => 'maandag', 'dinsdag', 'woensdag', 'donderdag', 'vrijdag', 'zaterdag', 'zondag'];
+    $maand = [1 => 'januari', 'februari', 'maart', 'april', 'mei', 'juni', 'juli', 'augustus', 'september', 'oktober', 'november', 'december'];
+
+    $system1 .=  '
+<b>E. Vandaag</b>
+Het is nu ' . $dag[$dateN] . ' ' . date("j") . ' ' . $maand[$maandN] . ' ' . date("Y G:i") . '. Tijdens onze openingstijden wordt de mail en whatsapp meestal beantwoord binnen 2 uur.
+';
+
+    return $system1;
+}
+
 // Dit maakt het gesprek voor OpenAI.
 // Eerst voegen we wat eerdere context toe en daarna de nieuwste vraag.
 function maakBerichtenVoorOpenAi($conn, $bericht)
 {
-    global $univ_one, $univ_web, $univ_nin, $univ_web_text, $univ_mar, $univ_zoeken;
-    include_once $_SERVER['DOCUMENT_ROOT'] . '/include/ChatGPT/mrM.php';
-
     $basisPrompt = 'Je bent een klantenservice assistent voor MarioSwitch.nl. Als je live data nodig hebt, gebruik je een functie. Geef geen data op basis van aannames als een functie nodig is. Noem nooit exacte voorraadaantallen aan klanten. Zeg alleen of iets op voorraad is of niet. Voor orderdata moet de klant eerst zowel een bestelnummer als het juiste e-mailadres geven. Als je via zoek_bestelling artikelen terugkrijgt en artikelen_gevonden true is, presenteer die als een nette lijst met per regel: "{aantal}x {productnaam} — {prijs} euro" (als prijs bekend is). Toon daarna altijd: "Verzendkosten: X euro" en "Totaal: Y euro" op basis van resultaat.verzendkosten en resultaat.totaal. Als artikelen_gevonden false is, zeg dan dat je de artikelregels nu niet kunt ophalen (en claim niet dat er geen artikelen zijn). Voor verzenden: gebruik resultaat.verzend_status (verzonden/niet_verzonden). Als resultaat.track_code gevuld is, toon die. Als track_code leeg is, zeg dat er (nog) geen track&trace code beschikbaar is.';
+    $contextMessages = haalGespreksContextOp(
+        $conn,
+        (string) ($bericht['cookie'] ?? ''),
+        (int) ($bericht['id'] ?? 0)
+    );
 
-    // Voeg de originele Mr M tone of voice toe
-    $systemPrompt = $basisPrompt . "\n\n" . ($systemMrM ?? '');
+    $assistant0 = haalAssistant0VoorBericht($conn, $contextMessages, (string) ($bericht['user_message'] ?? ''));
+    $system1 = bouwSystem1OpBasisVanAssistant0($assistant0);
+    $systemPrompt = $basisPrompt . "\n\n" . $system1;
 
     $messages = [
         [
@@ -1094,13 +1353,6 @@ function maakBerichtenVoorOpenAi($conn, $bericht)
             'content' => $systemPrompt,
         ],
     ];
-
-    // We nemen de laatste afgeronde berichten van dezelfde bezoeker mee.
-    $contextMessages = haalGespreksContextOp(
-        $conn,
-        (string) ($bericht['cookie'] ?? ''),
-        (int) ($bericht['id'] ?? 0)
-    );
 
     foreach ($contextMessages as $contextMessage) {
         $messages[] = $contextMessage;
