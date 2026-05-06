@@ -205,6 +205,9 @@ function roepOpenAiAan($messages, $tools = [], $toolChoice = 'auto')
         ]);
     }
 
+    // Model keuze zoals in ChatFunction.php:
+    // CHAT_MODEL_MODE = 1 (duurste), 2 (prijs/kwaliteit), 3 (snel).
+    // Default is 3.
     $temperature = 0.2;
     $model = 3;
     if (function_exists('getProjectEnvValue')) {
@@ -218,9 +221,11 @@ function roepOpenAiAan($messages, $tools = [], $toolChoice = 'auto')
     if ($model == 1) {
         $model = 'gpt-5.2';
     } elseif ($model == 2) {
+        // In ChatFunction wordt mode 2 met temperature 1 gebruikt.
         $temperature = 1;
         $model = 'gpt-5-mini';
     } elseif ($model == 3) {
+        // Snelste/stabiele fallback.
         $temperature = 1;
         $model = 'gpt-4.1-mini';
     } elseif (!is_string($model) || $model === '') {
@@ -279,6 +284,8 @@ function roepOpenAiAanZonderTone($messages, $tools = [], $toolChoice = 'auto', $
         return null;
     }
 
+    // Zelfde model keuze als roepOpenAiAan(), maar zonder extra dashboard tone-of-voice.
+    // Dit is bedoeld voor system0 (onderwerp bepalen).
     $temperature = 0.2;
     $model = 3;
     if (function_exists('getProjectEnvValue')) {
@@ -1432,12 +1439,18 @@ try {
     $tools = bouwToolsVoorOpenAi();
     $userMessage = (string) ($bericht['user_message'] ?? '');
     $toolChoice = bepaalGeforceerdeToolChoice($userMessage);
+    // Als de gebruiker naar voorraad/prijs vraagt willen we altijd live data ophalen
+    // via zoek_productvoorraad, zodat de bot niet gaat gokken.
     if ($toolChoice === 'auto' && preg_match('/\b(op\s+voorraad|voorraad|beschikbaar|in\s+stock|prijs)\b/i', $userMessage) === 1) {
         $toolChoice = 'required';
     }
 
     if ($toolChoice !== 'auto') {
-        schrijfWorkerLog('Worker forceert functie zoek_bestelling voor bericht ' . $bericht['id'] . '.');
+        if (is_array($toolChoice) && isset($toolChoice['function']['name'])) {
+            schrijfWorkerLog('Worker forceert functie ' . (string) $toolChoice['function']['name'] . ' voor bericht ' . $bericht['id'] . '.');
+        } elseif ($toolChoice === 'required') {
+            schrijfWorkerLog('Worker forceert het gebruik van tools voor bericht ' . $bericht['id'] . '.');
+        }
     }
 
     $eersteAntwoord = roepOpenAiAan($messages, $tools, $toolChoice);
