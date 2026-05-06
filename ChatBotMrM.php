@@ -424,10 +424,6 @@ header('X-Robots-Tag: noindex, nofollow', true);
         <form action="ChatGptMrM.php" id="chat-form" method="POST">
             <textarea id="user-input" name="user" placeholder="Typ hier je bericht..." rows="1" required style="flex: 1;"></textarea>
             <input type='hidden' name='page' id='page' value='<?php echo $_SERVER['REQUEST_URI']; ?>'>
-            <?php if (isset($_GET['debug']) && (string) $_GET['debug'] === '1') { ?>
-                <input type="hidden" name="debug" value="1">
-                <input type="hidden" name="debug_key" value="<?php echo htmlspecialchars((string) ($_GET['k'] ?? ''), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'); ?>">
-            <?php } ?>
             <button type="submit">Verstuur</button>
         </form>
     </div>
