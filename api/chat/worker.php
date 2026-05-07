@@ -358,8 +358,8 @@ function lowerTekst($text)
     return strtolower($t);
 }
 
-// Fallback parser: sommige DB's hebben geen losse orderregels-tabel.
-// Dan staat er soms een "items" tekstveld in Bestellingen, dat we proberen te ontleden.
+// Parser: in onze DB staan de artikelregels als tekst in Bestellingen.items.
+// We zetten die tekst om naar een nette lijst met producten + aantallen (en soms prijs).
 function parseBestellingItemsTekst($itemsTekst)
 {
     $t = trim((string) $itemsTekst);
@@ -439,7 +439,7 @@ function parseBestellingItemsTekst($itemsTekst)
     return $artikelen;
 }
 
-// Fallback parser: probeert verzendkosten/totaal uit dezelfde "items" tekst te halen.
+// Parser: probeert verzendkosten/totaal uit dezelfde "items" tekst te halen.
 function parseBestellingKostenTekst($itemsTekst)
 {
     $t = trim((string) $itemsTekst);
