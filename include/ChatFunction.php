@@ -13,17 +13,17 @@ function CHATGPT($input, $systemContent, $temperature = 1, $model = "gpt-5-mini"
 
     $input = addslashes($input);
 
-    if ($model == 1) //duurste model
-        $model = "gpt-5.2";
-    elseif ($model == 2) //prijs technisch beste model
-    {
-        $temperature = 1;
-        $model = "gpt-5-mini";
-        //$model = "gpt-4.1-mini";
-    } elseif ($model == 3) //gpt-5 nog altijd erg traag
-    {
-        $temperature = 1;
-        $model = "gpt-4.1-mini";
+    $mode = null;
+    if (is_int($model)) {
+        $mode = $model;
+    } elseif (is_string($model) && preg_match('/^\d+$/', $model) === 1) {
+        $mode = (int) $model;
+    }
+    if ($mode !== null) {
+        if ($mode === 2 || $mode === 3) {
+            $temperature = 1;
+        }
+        $model = function_exists('getChatModelNameFromMode') ? getChatModelNameFromMode($mode) : 'gpt-4.1-mini';
     }
     $endpoint = 'https://api.openai.com/v1/chat/completions'; // Juiste API-eindpunt voor chat/completions
 

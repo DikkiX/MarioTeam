@@ -101,6 +101,8 @@ Code-links in dit document zijn relatief (werken in GitHub én als je de repo lo
 ### OpenAI call voor e-mailconcepten
 - Functie:
   - [roepOpenAiAanVoorEmailConcept](EmailDashboard.php#L874) in [EmailDashboard.php](EmailDashboard.php)
+- Model:
+  - Gebruikt ook `CHAT_MODEL_MODE` uit `.env` (zelfde mapping als chat).
 - Waarom deze eigen cURL call bestaat (en niet CHATGPT()):
   - Nette foutafhandeling met HTTP status + OpenAI error message.
   - Timeout zodat dashboard niet blijft hangen.

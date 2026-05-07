@@ -152,6 +152,36 @@ if ($cookie === '' || $userMessage === '') {
 }
 
 try {
+    $stmt = $conn->prepare("
+        SELECT COUNT(*) AS c
+        FROM chat_queue
+        WHERE cookie = :cookie
+          AND created_at >= (NOW() - INTERVAL 60 SECOND)
+    ");
+    $stmt->execute([':cookie' => $cookie]);
+    $recentCount = (int) (($stmt->fetch()['c'] ?? 0));
+    if ($recentCount >= 12) {
+        stuurJsonResponse(429, [
+            'status' => 'error',
+            'message' => 'Je stuurt te snel achter elkaar berichten. Probeer het zo opnieuw.',
+        ]);
+    }
+
+    $stmt = $conn->prepare("
+        SELECT COUNT(*) AS c
+        FROM chat_queue
+        WHERE cookie = :cookie
+          AND status IN ('pending', 'processing')
+    ");
+    $stmt->execute([':cookie' => $cookie]);
+    $openCount = (int) (($stmt->fetch()['c'] ?? 0));
+    if ($openCount >= 5) {
+        stuurJsonResponse(429, [
+            'status' => 'error',
+            'message' => 'Er staan nog te veel chatberichten in de wachtrij. Wacht even tot het antwoord er is.',
+        ]);
+    }
+
     // We slaan het bericht alleen op in de wachtrij.
     // OpenAI wordt hier dus nog niet aangeroepen.
     $sql = "INSERT INTO chat_queue (cookie, user_message) VALUES (:cookie, :user_message)";

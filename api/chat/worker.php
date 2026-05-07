@@ -205,30 +205,13 @@ function roepOpenAiAan($messages, $tools = [], $toolChoice = 'auto')
         ]);
     }
 
-    // Model keuze zoals in ChatFunction.php:
-    // CHAT_MODEL_MODE = 1 (duurste), 2 (prijs/kwaliteit), 3 (snel).
-    // Default is 2 zodat de worker standaard hetzelfde gedrag heeft als ChatFunction (gpt-5-mini).
     $temperature = 0.2;
-    $model = 2;
-    if (function_exists('getProjectEnvValue')) {
-        $mode = getProjectEnvValue('CHAT_MODEL_MODE');
-        if (is_string($mode) && preg_match('/^\d+$/', $mode) === 1) {
-            $model = (int) $mode;
-        } elseif (is_int($mode)) {
-            $model = $mode;
-        }
+    $mode = function_exists('getChatModelMode') ? getChatModelMode() : 2;
+    if ($mode === 2 || $mode === 3) {
+        $temperature = 1;
     }
-    if ($model == 1) {
-        $model = 'gpt-5.2';
-    } elseif ($model == 2) {
-        // In ChatFunction wordt mode 2 met temperature 1 gebruikt.
-        $temperature = 1;
-        $model = 'gpt-5-mini';
-    } elseif ($model == 3) {
-        // Snelste/stabiele fallback.
-        $temperature = 1;
-        $model = 'gpt-4.1-mini';
-    } elseif (!is_string($model) || $model === '') {
+    $model = function_exists('getChatModelNameFromMode') ? getChatModelNameFromMode($mode) : 'gpt-4.1-mini';
+    if (!is_string($model) || $model === '') {
         $model = 'gpt-4.1-mini';
     }
 
@@ -284,27 +267,13 @@ function roepOpenAiAanZonderTone($messages, $tools = [], $toolChoice = 'auto', $
         return null;
     }
 
-    // Zelfde model keuze als roepOpenAiAan(), maar zonder extra dashboard tone-of-voice.
-    // Dit is bedoeld voor system0 (onderwerp bepalen).
     $temperature = 0.2;
-    $model = 2;
-    if (function_exists('getProjectEnvValue')) {
-        $mode = getProjectEnvValue('CHAT_MODEL_MODE');
-        if (is_string($mode) && preg_match('/^\d+$/', $mode) === 1) {
-            $model = (int) $mode;
-        } elseif (is_int($mode)) {
-            $model = $mode;
-        }
+    $mode = function_exists('getChatModelMode') ? getChatModelMode() : 2;
+    if ($mode === 2 || $mode === 3) {
+        $temperature = 1;
     }
-    if ($model == 1) {
-        $model = 'gpt-5.2';
-    } elseif ($model == 2) {
-        $temperature = 1;
-        $model = 'gpt-5-mini';
-    } elseif ($model == 3) {
-        $temperature = 1;
-        $model = 'gpt-4.1-mini';
-    } elseif (!is_string($model) || $model === '') {
+    $model = function_exists('getChatModelNameFromMode') ? getChatModelNameFromMode($mode) : 'gpt-4.1-mini';
+    if (!is_string($model) || $model === '') {
         $model = 'gpt-4.1-mini';
     }
 

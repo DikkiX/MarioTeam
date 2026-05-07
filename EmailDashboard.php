@@ -879,26 +879,9 @@ function roepOpenAiAanVoorEmailConcept($onderwerp, $klantTekst, $extraInstructie
         return ['ok' => false, 'error' => 'OPENAI_API_KEY ontbreekt in .env.'];
     }
 
-    $model = 2;
-    if (function_exists('getProjectEnvValue')) {
-        $mode = getProjectEnvValue('CHAT_MODEL_MODE');
-        if (is_string($mode) && preg_match('/^\d+$/', $mode) === 1) {
-            $model = (int) $mode;
-        } elseif (is_int($mode)) {
-            $model = $mode;
-        }
-    }
-    if ($model == 1) {
-        $model = 'gpt-5.2';
-    } elseif ($model == 2) {
-        $model = 'gpt-5-mini';
-    } elseif ($model == 3) {
-        $model = 'gpt-4.1-mini';
-    } elseif (!is_string($model) || $model === '') {
-        $model = 'gpt-4.1-mini';
-    }
+    $model = function_exists('getChatModelName') ? getChatModelName() : 'gpt-4.1-mini';
 
-    $system = 'Je schrijft een concept-antwoord voor de klantenservice van de webshops van MarioTeam. Schrijf in het Nederlands. Als informatie ontbreekt, stel eerst korte, duidelijke vragen. Geef geen exacte voorraadaantallen. Als de klant om ordergegevens vraagt, vraag eerst om bestelnummer + e-mailadres. Geef alleen het antwoord (geen uitleg over je stappen).';
+    $system = 'Je schrijft een concept-antwoord voor de klantenservice van de webshops van MarioTeam. Schrijf in het Nederlands. Als informatie ontbreekt, stel eerst korte, duidelijke vragen. Geef geen exacte voorraadaantallen. Als de klant om ordergegevens vraagt, vraag eerst om bestelnummer + e-mailadres. Als de klant naar actuele prijs/voorraad vraagt, zeg dat je dat niet live kunt checken in e-mail en verwijs naar de website of de chat. Geef alleen het antwoord (geen uitleg over je stappen).';
     $tone = '';
     try {
         global $conn;
