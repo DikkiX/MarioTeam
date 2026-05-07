@@ -393,8 +393,8 @@ header('X-Robots-Tag: noindex, nofollow', true);
     <div class="chat-messages" id="chatMessages">
         <?php
         include_once $_SERVER['DOCUMENT_ROOT'] . "/include/db.inc";
-        error_reporting(-1); //show errors
-        if (isset($_COOKIE['chatbot_session'])) {
+        $conn = $conn ?? null;
+        if (($conn instanceof PDO) && isset($_COOKIE['chatbot_session'])) {
             /////////////////////////////////////////////////
             //SELECT berichten	
             $cookie_value = $_COOKIE["chatbot_session"];    // Haal bestaande cookie-waarde op
