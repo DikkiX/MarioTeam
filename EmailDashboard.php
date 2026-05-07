@@ -1,6 +1,7 @@
 <?php
 include_once $_SERVER['DOCUMENT_ROOT'] . '/include/db.inc';
 include_once $_SERVER['DOCUMENT_ROOT'] . '/include/env.php';
+include_once $_SERVER['DOCUMENT_ROOT'] . '/include/ChatFunction.php';
 $conn = $conn ?? null;
 if (!($conn instanceof PDO)) {
     http_response_code(500);
@@ -657,6 +658,136 @@ function normaliseerTekst($text)
     return trim((string) $text);
 }
 
+function stripQuotedEnHandtekeningTekst($text)
+{
+    $t = normaliseerTekst($text);
+    if ($t === '') {
+        return '';
+    }
+
+    $cutPatterns = [
+        "/\nOn[^\n]{0,200}wrote:\n/i",
+        "/\nOp[^\n]{0,200}schreef[^\n]{0,200}:\n/i",
+        "/\nVan:\s*[^\n]+\nVerzonden:\s*[^\n]+\nAan:\s*[^\n]+\nOnderwerp:\s*[^\n]+\n/i",
+        "/\nFrom:\s*[^\n]+\nSent:\s*[^\n]+\nTo:\s*[^\n]+\nSubject:\s*[^\n]+\n/i",
+    ];
+    foreach ($cutPatterns as $re) {
+        if (preg_match($re, $t, $m, PREG_OFFSET_CAPTURE) === 1) {
+            $pos = (int) ($m[0][1] ?? -1);
+            if ($pos > 0) {
+                $t = substr($t, 0, $pos);
+            }
+            break;
+        }
+    }
+
+    $lines = preg_split("/\n/", $t);
+    if (is_array($lines)) {
+        $keep = [];
+        foreach ($lines as $line) {
+            $l = (string) $line;
+            if (preg_match('/^\s*>+/', $l) === 1) {
+                continue;
+            }
+            $keep[] = $l;
+        }
+        $t = implode("\n", $keep);
+    }
+
+    $sigMarkers = [
+        "\n-- \n",
+        "\n--\n",
+        "\nMet vriendelijke groet",
+        "\nVriendelijke groet",
+        "\nGroeten,",
+        "\nKind regards",
+        "\nBest regards",
+        "\nSent from my",
+    ];
+    foreach ($sigMarkers as $m) {
+        $p = stripos($t, $m);
+        if ($p !== false && $p > 0) {
+            $t = substr($t, 0, (int) $p);
+            break;
+        }
+    }
+
+    $t = preg_replace("/\n{3,}/", "\n\n", (string) $t);
+    return trim((string) $t);
+}
+
+function bouwThreadContextVoorAi($threadMessages, $klantEmail, $maxVorige = 5)
+{
+    if (!is_array($threadMessages) || empty($threadMessages)) {
+        return '';
+    }
+
+    $klantEmail = strtolower(trim((string) $klantEmail));
+    $items = [];
+
+    foreach ($threadMessages as $m) {
+        if (!is_array($m)) {
+            continue;
+        }
+        $payload = $m['payload'] ?? [];
+        $headers = (is_array($payload) && isset($payload['headers']) && is_array($payload['headers'])) ? $payload['headers'] : [];
+        $fromHeader = haalHeaderOp($headers, 'From') ?? '';
+        $fromEmail = function_exists('parseerEmailAdresUitFromHeader') ? parseerEmailAdresUitFromHeader($fromHeader) : '';
+        $fromEmail = strtolower(trim((string) $fromEmail));
+        $isKlant = ($klantEmail !== '' && $fromEmail !== '' && $fromEmail === $klantEmail);
+
+        $text = zoekTekstPlainInPayload($payload);
+        if (!is_string($text) || $text === '') {
+            $text = zoekTekstHtmlInPayload($payload);
+        }
+        if (!is_string($text) || $text === '') {
+            $text = isset($m['snippet']) ? (string) $m['snippet'] : '';
+        }
+        $text = stripQuotedEnHandtekeningTekst($text);
+        if ($text === '') {
+            continue;
+        }
+
+        $items[] = [
+            'who' => $isKlant ? 'Klant' : 'Wij',
+            'text' => $text,
+        ];
+    }
+
+    if (count($items) <= 1) {
+        return '';
+    }
+
+    $vorige = array_slice($items, 0, -1);
+    $maxVorige = (int) $maxVorige;
+    if ($maxVorige <= 0) {
+        $maxVorige = 1;
+    }
+    if ($maxVorige > 10) {
+        $maxVorige = 10;
+    }
+    if (count($vorige) > $maxVorige) {
+        $vorige = array_slice($vorige, -$maxVorige);
+    }
+
+    $blocks = [];
+    foreach ($vorige as $it) {
+        if (!is_array($it)) {
+            continue;
+        }
+        $who = isset($it['who']) ? (string) $it['who'] : '';
+        $txt = isset($it['text']) ? (string) $it['text'] : '';
+        $who = $who !== '' ? $who : 'Bericht';
+        $txt = trim($txt);
+        if ($txt === '') {
+            continue;
+        }
+        $blocks[] = $who . ":\n" . $txt;
+    }
+
+    return implode("\n\n", $blocks);
+}
+
 function haalHtmlUitPayload($payload)
 {
     // Sommige mails hebben alleen HTML, dit haalt de ruwe HTML string uit de payload.
@@ -876,7 +1007,7 @@ function voegEmailConceptToe($conn, $threadId, $klantEmail, $conceptTekst, $ontv
     return (int) $conn->lastInsertId();
 }
 
-function roepOpenAiAanVoorEmailConcept($onderwerp, $klantTekst, $extraInstructies = '')
+function roepOpenAiAanVoorEmailConcept($onderwerp, $klantTekst, $extraInstructies = '', $threadContext = '')
 {
     // Dit maakt een concept-antwoord op basis van de klantmail.
     $apiKey = getProjectEnvValue('OPENAI_API_KEY');
@@ -902,8 +1033,12 @@ function roepOpenAiAanVoorEmailConcept($onderwerp, $klantTekst, $extraInstructie
     if (is_string($extraInstructies) && trim($extraInstructies) !== '') {
         $system .= "\n\nExtra regels/instructies:\n" . trim($extraInstructies);
     }
-    $user = "Onderwerp: " . (string) $onderwerp . "\n\nKlantmail:\n" . (string) $klantTekst;
-
+    $user = "Onderwerp: " . (string) $onderwerp;
+    if (is_string($threadContext) && trim($threadContext) !== '') {
+        $user .= "\n\nEerdere berichten (ingekort):\n" . trim($threadContext);
+    }
+    $user .= "\n\nLaatste klantmail:\n" . (string) $klantTekst;
+    /*
     $data = [
         'model' => $model,
         'messages' => [
@@ -913,7 +1048,10 @@ function roepOpenAiAanVoorEmailConcept($onderwerp, $klantTekst, $extraInstructie
         'temperature' => 0.2,
         'max_completion_tokens' => 900,
     ];
+ 
+$raw = CHATGPT($user, $system, $temperature = 0.2, $model, '', 1);
 
+    
     $ch = curl_init('https://api.openai.com/v1/chat/completions');
     curl_setopt($ch, CURLOPT_POST, true);
     curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($data));
@@ -934,6 +1072,9 @@ function roepOpenAiAanVoorEmailConcept($onderwerp, $klantTekst, $extraInstructie
     }
 
     $decoded = json_decode($raw, true);
+
+$decoded = CHATGPT($user, $system, $temperature = 0.2, $model, '', 1);   
+    
     if (!is_array($decoded)) {
         return ['ok' => false, 'error' => 'OpenAI gaf geen geldige JSON terug.'];
     }
@@ -941,14 +1082,16 @@ function roepOpenAiAanVoorEmailConcept($onderwerp, $klantTekst, $extraInstructie
     if ($status < 200 || $status >= 300) {
         $msg = isset($decoded['error']['message']) ? (string) $decoded['error']['message'] : 'Onbekende OpenAI fout';
         return ['ok' => false, 'error' => $msg];
-    }
 
     $content = $decoded['choices'][0]['message']['content'] ?? '';
     $content = is_string($content) ? trim($content) : '';
     if ($content === '') {
         return ['ok' => false, 'error' => 'OpenAI gaf geen tekst terug.'];
     }
-
+    
+    */
+    $mode = function_exists('getChatModelMode') ? getChatModelMode() : 2;
+    $content = CHATGPT($user, $system, 0.2, $mode, '', 1);
     return ['ok' => true, 'content' => $content];
 }
 
@@ -1595,12 +1738,23 @@ function runEmailSyncOnce($conn, $maxResults = 5)
             $text = isset($data['snippet']) ? (string) $data['snippet'] : '';
         }
         $text = normaliseerTekst($text);
+        $text = stripQuotedEnHandtekeningTekst($text);
         if ($text === '') {
             continue;
         }
 
         $extraInstructies = isset($rulesResult['extra_instructies']) ? (string) $rulesResult['extra_instructies'] : '';
-        $ai = roepOpenAiAanVoorEmailConcept($subject, $text, $extraInstructies);
+        $threadContext = '';
+        try {
+            $t = gmailApiRequest('GET', 'users/me/threads/' . rawurlencode($threadId), $accessToken, null, ['format' => 'full']);
+            if (!empty($t['ok']) && isset($t['data']['messages']) && is_array($t['data']['messages'])) {
+                $threadContext = bouwThreadContextVoorAi($t['data']['messages'], $klantEmail, 5);
+            }
+        } catch (Throwable) {
+            $threadContext = '';
+        }
+
+        $ai = roepOpenAiAanVoorEmailConcept($subject, $text, $extraInstructies, $threadContext);
         if (empty($ai['ok'])) {
             $err = isset($ai['error']) ? (string) $ai['error'] : 'OpenAI fout.';
             schrijfEmailWorkerLog('OpenAI fout: ' . $err);
@@ -2563,8 +2717,7 @@ if (!$concept) {
     $detailHtml .= '</div>';
 } else {
     // Als je een concept opent, laden we de hele conversatie om de originele mail te tonen.
-    $origineelTekst = null;
-    $origineelHtml = '';
+    $threadHtml = '';
     $origineelOnderwerp = isset($concept['onderwerp']) ? trim((string) $concept['onderwerp']) : '';
     $token = haalGmailAccessTokenOp();
     if (!empty($token['ok'])) {
@@ -2573,58 +2726,80 @@ if (!$concept) {
         $thread = gmailApiRequest('GET', 'users/me/threads/' . rawurlencode($threadId), $accessToken, null, ['format' => 'full']);
         if (!empty($thread['ok']) && isset($thread['data']['messages']) && is_array($thread['data']['messages'])) {
             $messages = $thread['data']['messages'];
-            $klant = (string) $concept['klant_email'];
-            $gevonden = null;
-            foreach (array_reverse($messages) as $m) {
-                if (!is_array($m) || !isset($m['payload']['headers'])) {
+            $firstSubject = '';
+            foreach ($messages as $m) {
+                if (!is_array($m)) {
                     continue;
                 }
-                $from = haalHeaderOp($m['payload']['headers'], 'From');
-                if (is_string($from) && $from !== '' && stripos($from, $klant) !== false) {
-                    $gevonden = $m;
-                    break;
+                $payload = $m['payload'] ?? [];
+                $headers = (is_array($payload) && isset($payload['headers']) && is_array($payload['headers'])) ? $payload['headers'] : [];
+                $sub = haalHeaderOp($headers, 'Subject') ?? '';
+                if ($firstSubject === '' && is_string($sub) && trim($sub) !== '') {
+                    $firstSubject = trim((string) $sub);
                 }
             }
-            if ($gevonden === null) {
-                $last = end($messages);
-                if (is_array($last)) {
-                    $gevonden = $last;
-                }
-            }
-            if (is_array($gevonden)) {
-                $h = $gevonden['payload']['headers'] ?? [];
-                $sub = haalHeaderOp($h, 'Subject');
-                $from = haalHeaderOp($h, 'From');
-                $date = haalHeaderOp($h, 'Date');
-                if (is_string($sub) && $sub !== '') {
-                    $origineelOnderwerp = $sub;
-                    $onderwerpDb = isset($concept['onderwerp']) ? trim((string) $concept['onderwerp']) : '';
-                    if ($onderwerpDb === '') {
-                        try {
-                            $upd = $conn->prepare("UPDATE email_concepten SET onderwerp = :o WHERE id = :id AND (onderwerp IS NULL OR onderwerp = '')");
-                            $upd->execute([
-                                ':o' => $origineelOnderwerp,
-                                ':id' => (int) $concept['id'],
-                            ]);
-                        } catch (Throwable) {
-                        }
+            if ($firstSubject !== '') {
+                $origineelOnderwerp = $firstSubject;
+                $onderwerpDb = isset($concept['onderwerp']) ? trim((string) $concept['onderwerp']) : '';
+                if ($onderwerpDb === '') {
+                    try {
+                        $upd = $conn->prepare("UPDATE email_concepten SET onderwerp = :o WHERE id = :id AND (onderwerp IS NULL OR onderwerp = '')");
+                        $upd->execute([
+                            ':o' => $origineelOnderwerp,
+                            ':id' => (int) $concept['id'],
+                        ]);
+                    } catch (Throwable) {
                     }
                 }
-
-                $rawHtml = haalHtmlUitPayload($gevonden['payload'] ?? []);
-                if (is_string($rawHtml) && trim($rawHtml) !== '') {
-                    $origineelHtml = sanitizeEmailHtmlVoorDashboard($rawHtml);
-                }
-
-                $text = zoekTekstPlainInPayload($gevonden['payload'] ?? []);
-                if (!is_string($text) || $text === '') {
-                    $text = zoekTekstHtmlInPayload($gevonden['payload'] ?? []);
-                }
-                if (!is_string($text) || $text === '') {
-                    $text = isset($gevonden['snippet']) ? (string) $gevonden['snippet'] : '';
-                }
-                $origineelTekst = normaliseerTekst($text);
             }
+
+            $blocks = [];
+            foreach ($messages as $m) {
+                if (!is_array($m)) {
+                    continue;
+                }
+                $payload = $m['payload'] ?? [];
+                $headers = (is_array($payload) && isset($payload['headers']) && is_array($payload['headers'])) ? $payload['headers'] : [];
+                $from = (string) (haalHeaderOp($headers, 'From') ?? '');
+                $date = (string) (haalHeaderOp($headers, 'Date') ?? '');
+
+                $rawHtml = haalHtmlUitPayload($payload);
+                $bodyHtml = '';
+                if (is_string($rawHtml) && trim($rawHtml) !== '') {
+                    $bodyHtml = sanitizeEmailHtmlVoorDashboard($rawHtml);
+                }
+
+                $text = zoekTekstPlainInPayload($payload);
+                if (!is_string($text) || $text === '') {
+                    $text = zoekTekstHtmlInPayload($payload);
+                }
+                if (!is_string($text) || $text === '') {
+                    $text = isset($m['snippet']) ? (string) $m['snippet'] : '';
+                }
+                $text = normaliseerTekst($text);
+
+                $headerLine = e($from !== '' ? $from : 'Onbekend');
+                $metaLine = $date !== '' ? e($date) : '';
+                $contentHtml = '';
+                if ($bodyHtml !== '') {
+                    $contentHtml = '<div style="background:#ffffff; color:#111827; font-size:14px; line-height:1.45;">' . $bodyHtml . '</div>';
+                } elseif ($text !== '') {
+                    $contentHtml = '<div style="white-space:pre-wrap;">' . e($text) . '</div>';
+                } else {
+                    $contentHtml = '<div style="color:#6b7280;">Leeg bericht.</div>';
+                }
+
+                $b = '<div style="border:1px solid #e5e7eb; border-radius:12px; padding:10px 12px; margin-bottom:10px;">';
+                $b .= '<div style="font-weight:800; color:#111827;">' . $headerLine . '</div>';
+                if ($metaLine !== '') {
+                    $b .= '<div style="color:#6b7280; font-size:12px; margin-top:2px;">' . $metaLine . '</div>';
+                }
+                $b .= '<div style="margin-top:10px;">' . $contentHtml . '</div>';
+                $b .= '</div>';
+                $blocks[] = $b;
+            }
+
+            $threadHtml = implode('', $blocks);
         }
     }
 
@@ -2632,11 +2807,9 @@ if (!$concept) {
     $detailHtml .= '<div style="font-weight:800; margin-bottom:10px;">' . e($kop) . '</div>';
 
     $detailHtml .= '<div style="border:1px solid #9ca3af; background:#ffffff; border-radius:12px; padding:10px 12px; margin-bottom:12px;">';
-    $detailHtml .= '<div style="font-weight:800; margin-bottom:6px;">Originele Klantvraag:</div>';
-    if (is_string($origineelHtml) && $origineelHtml !== '') {
-        $detailHtml .= '<div style="background:#ffffff; color:#111827; font-size:14px; line-height:1.45;">' . $origineelHtml . '</div>';
-    } elseif (is_string($origineelTekst) && $origineelTekst !== '') {
-        $detailHtml .= '<div style="white-space:pre-wrap;">' . e($origineelTekst) . '</div>';
+    $detailHtml .= '<div style="font-weight:800; margin-bottom:6px;">Gespreksgeschiedenis:</div>';
+    if (is_string($threadHtml) && $threadHtml !== '') {
+        $detailHtml .= $threadHtml;
     } else {
         $detailHtml .= '<div style="color:#6b7280;">Niet beschikbaar. OAuth/token of thread ophalen is nog niet gelukt.</div>';
     }
