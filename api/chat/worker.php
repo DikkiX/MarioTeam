@@ -348,12 +348,6 @@ function roepOpenAiAanZonderTone($messages, $tools = [], $toolChoice = 'auto', $
     return $decoded;
 }
 
-// Veiligheidscheck voor dynamische tabel/kolomnamen (we gebruiken dit bij "SHOW COLUMNS" en dynamische SELECTs).
-function isVeiligeDbNaam($name)
-{
-    return is_string($name) && preg_match('/^[A-Za-z0-9_]+$/', $name) === 1;
-}
-
 // Kleine helper voor case-insensitive vergelijken (met UTF-8 support als mbstring aanwezig is).
 function lowerTekst($text)
 {
@@ -362,72 +356,6 @@ function lowerTekst($text)
         return mb_strtolower($t, 'UTF-8');
     }
     return strtolower($t);
-}
-
-// Probeert tabellen te vinden met een naam die lijkt op een patroon (handig omdat schema's per site kunnen verschillen).
-function haalTabelNamenMetLike($conn, $like)
-{
-    try {
-        $stmt = $conn->prepare("SHOW TABLES LIKE :t");
-        $stmt->execute([':t' => (string) $like]);
-        $rows = $stmt->fetchAll(PDO::FETCH_NUM);
-        $namen = [];
-        foreach ($rows as $r) {
-            if (isset($r[0]) && is_string($r[0]) && $r[0] !== '') {
-                $namen[] = $r[0];
-            }
-        }
-        return $namen;
-    } catch (Throwable) {
-        return [];
-    }
-}
-
-// Leest kolomnamen van een tabel, zodat we kunnen "raden" welke kolom bijv. bestelling_id / productnaam / aantal is.
-function haalKolommenVoorTabel($conn, $table)
-{
-    if (!isVeiligeDbNaam($table)) {
-        return [];
-    }
-    try {
-        $stmt = $conn->query("SHOW COLUMNS FROM `$table`");
-        $rows = $stmt ? $stmt->fetchAll() : [];
-        if (!is_array($rows) || empty($rows)) {
-            return [];
-        }
-        $kolommen = [];
-        foreach ($rows as $r) {
-            if (!isset($r['Field'])) {
-                continue;
-            }
-            $field = (string) $r['Field'];
-            if ($field !== '' && isVeiligeDbNaam($field)) {
-                $kolommen[] = $field;
-            }
-        }
-        return $kolommen;
-    } catch (Throwable) {
-        return [];
-    }
-}
-
-// Kleine helper om te checken of een kolom bestaat (wordt gebruikt bij schema-verschillen).
-function tabelHeeftKolom($conn, $table, $kolom)
-{
-    if (!is_string($table) || $table === '' || !isVeiligeDbNaam($table)) {
-        return false;
-    }
-    if (!is_string($kolom) || $kolom === '' || !isVeiligeDbNaam($kolom)) {
-        return false;
-    }
-    try {
-        $stmt = $conn->prepare("SHOW COLUMNS FROM `$table` LIKE :c");
-        $stmt->execute([':c' => $kolom]);
-        $row = $stmt->fetch();
-        return $row !== false;
-    } catch (Throwable) {
-        return false;
-    }
 }
 
 // Fallback parser: sommige DB's hebben geen losse orderregels-tabel.
@@ -585,354 +513,42 @@ function haalTrackCodeUitTracktrace($tracktrace)
     return '';
 }
 
-// Bestelling ophalen met een dynamische veldenlijst (zodat we netjes kunnen terugvallen als sommige kolommen niet bestaan).
-function haalBestellingOpMetVelden($conn, $bestellingId, $email, $velden)
-{
-    $bestellingId = (int) $bestellingId;
-    $email = trim((string) $email);
-    if ($bestellingId <= 0 || $email === '') {
-        return false;
-    }
-
-    $veldenTekst = is_array($velden) ? implode(', ', $velden) : '';
-    if ($veldenTekst === '') {
-        return false;
-    }
-
-    $stmt = $conn->prepare("
-        SELECT $veldenTekst
-        FROM Bestellingen
-        WHERE id = :id AND mail = :email
-        LIMIT 1
-    ");
-    $stmt->execute([
-        ':id' => $bestellingId,
-        ':email' => $email,
-    ]);
-    return $stmt->fetch();
-}
-
-// Bestelling ophalen met fallback omdat de DB per project niet altijd dezelfde kolommen heeft.
+// Bestelling ophalen uit de Bestellingen tabel.
 function haalBestellingOp($conn, $bestellingId, $email)
 {
-    $basis = ['id', 'betaling', 'verzendkosten', 'totaal', 'totaal_site', 'status', 'verzending', 'datum', 'PayStatus', 'tracktrace'];
-    $extra = ['items', 'inpakdatum', 'verzenddatum', 'verzonden', 'verzonden_op', 'verzend_op', 'datum_verzonden', 'verzend_datum'];
-
     try {
-        $row = haalBestellingOpMetVelden($conn, $bestellingId, $email, array_merge($basis, $extra));
-        if ($row !== false) {
-            return $row;
+        $bestellingId = (int) $bestellingId;
+        $email = trim((string) $email);
+        if ($bestellingId <= 0 || $email === '') {
+            return false;
         }
-    } catch (Throwable) {
-    }
 
-    try {
-        $row = haalBestellingOpMetVelden($conn, $bestellingId, $email, array_merge($basis, ['items']));
-        if ($row !== false) {
-            return $row;
-        }
-    } catch (Throwable) {
-    }
-
-    try {
-        return haalBestellingOpMetVelden($conn, $bestellingId, $email, $basis);
+        $stmt = $conn->prepare("
+            SELECT
+                id,
+                betaling,
+                verzendkosten,
+                totaal,
+                totaal_site,
+                status,
+                verzending,
+                datum,
+                PayStatus,
+                tracktrace,
+                items,
+                inpakdatum
+            FROM Bestellingen
+            WHERE id = :id AND mail = :email
+            LIMIT 1
+        ");
+        $stmt->execute([
+            ':id' => $bestellingId,
+            ':email' => $email,
+        ]);
+        return $stmt->fetch();
     } catch (Throwable) {
         return false;
     }
-}
-
-// Probeert artikelen/orderregels bij een bestelling te vinden, ook als de tabel/kolomnamen anders heten.
-function haalBestellingArtikelenOp($conn, $bestellingId)
-{
-    $bestellingId = (int) $bestellingId;
-    if ($bestellingId <= 0) {
-        return [
-            'gevonden' => false,
-            'artikelen' => [],
-            'bron' => '',
-            'message' => 'Ongeldig bestelnummer.',
-        ];
-    }
-
-    $orderKolommen = [
-        'bestelling_id',
-        'bestellingid',
-        'bestelling',
-        'bestel_id',
-        'bestelid',
-        'bestellingnr',
-        'bestelnr',
-        'bestellingnummer',
-        'bestelnummer',
-        'order_id',
-        'orderid',
-        'ordernr',
-        'order_nr',
-        'idbestelling',
-    ];
-    $aantalKolommen = [
-        'aantal',
-        'qty',
-        'quantity',
-        'amount',
-    ];
-    $naamKolommen = [
-        'productnaam',
-        'product_naam',
-        'titel',
-        'naam',
-        'product',
-        'omschrijving',
-        'artikel',
-        'item',
-    ];
-    $linkKolommen = [
-        'link',
-        'link2',
-        'product_link',
-        'product_link2',
-        'artikel_link',
-        'game_link',
-        'winkel_link',
-    ];
-    $productNrKolommen = [
-        'nr',
-        'artikelnr',
-        'artikel_nr',
-        'productnr',
-        'product_nr',
-        'winkel_nr',
-        'winkelnr',
-        'productid',
-        'product_id',
-        'item_id',
-    ];
-
-    $candidateTables = [];
-    // Eerst zoeken we naar tabellen die op een orderregels-tabel lijken (via LIKE),
-    // daarna voegen we een vaste lijst met veelvoorkomende namen toe.
-    foreach (['Bestel%', 'Bestelling%', 'Order%'] as $like) {
-        foreach (haalTabelNamenMetLike($conn, $like) as $t) {
-            $candidateTables[$t] = true;
-        }
-    }
-
-    foreach (
-        [
-            'BestelRegels',
-            'Bestelregels',
-            'BestelRegel',
-            'BestellingRegels',
-            'Bestellingregels',
-            'OrderRegels',
-            'Orderregels',
-            'OrderItems',
-            'order_items',
-            'order_lines',
-            'bestelling_regels',
-            'bestelregels',
-        ] as $fixed
-    ) {
-        $candidateTables[$fixed] = true;
-    }
-
-    // We scoren elke kandidaat-tabel op: heeft hij een bestelling-id kolom, plus (liefst) aantal/naam/link/productnr kolommen.
-    // De beste match gebruiken we voor de SELECT.
-    $beste = [
-        'table' => '',
-        'score' => -1,
-        'orderCol' => '',
-        'qtyCol' => '',
-        'nameCol' => '',
-        'linkCol' => '',
-        'nrCol' => '',
-    ];
-
-    foreach (array_keys($candidateTables) as $t) {
-        if (!isVeiligeDbNaam($t)) {
-            continue;
-        }
-        $kolommen = haalKolommenVoorTabel($conn, $t);
-        if (empty($kolommen)) {
-            continue;
-        }
-
-        $map = [];
-        foreach ($kolommen as $k) {
-            $map[lowerTekst($k)] = $k;
-        }
-
-        $orderCol = '';
-        foreach ($orderKolommen as $pref) {
-            if (isset($map[$pref])) {
-                $orderCol = $map[$pref];
-                break;
-            }
-        }
-        if ($orderCol === '') {
-            continue;
-        }
-
-        $qtyCol = '';
-        foreach ($aantalKolommen as $pref) {
-            if (isset($map[$pref])) {
-                $qtyCol = $map[$pref];
-                break;
-            }
-        }
-
-        $nameCol = '';
-        foreach ($naamKolommen as $pref) {
-            if (isset($map[$pref])) {
-                $nameCol = $map[$pref];
-                break;
-            }
-        }
-
-        $linkCol = '';
-        foreach ($linkKolommen as $pref) {
-            if (isset($map[$pref])) {
-                $linkCol = $map[$pref];
-                break;
-            }
-        }
-
-        $nrCol = '';
-        foreach ($productNrKolommen as $pref) {
-            if (isset($map[$pref])) {
-                $nrCol = $map[$pref];
-                break;
-            }
-        }
-
-        $score = 0;
-        if ($orderCol !== '') {
-            $score += 10;
-        }
-        if ($nameCol !== '') {
-            $score += 8;
-        }
-        if ($linkCol !== '') {
-            $score += 6;
-        }
-        if ($nrCol !== '') {
-            $score += 6;
-        }
-        if ($qtyCol !== '') {
-            $score += 2;
-        }
-
-        if ($score > $beste['score']) {
-            $beste = [
-                'table' => $t,
-                'score' => $score,
-                'orderCol' => $orderCol,
-                'qtyCol' => $qtyCol,
-                'nameCol' => $nameCol,
-                'linkCol' => $linkCol,
-                'nrCol' => $nrCol,
-            ];
-        }
-    }
-
-    if ($beste['table'] === '' || $beste['orderCol'] === '') {
-        return [
-            'gevonden' => false,
-            'artikelen' => [],
-            'bron' => '',
-            'message' => 'Orderregels tabel niet gevonden.',
-        ];
-    }
-
-    $table = $beste['table'];
-    $orderCol = $beste['orderCol'];
-    $qtyCol = $beste['qtyCol'];
-    $nameCol = $beste['nameCol'];
-    $linkCol = $beste['linkCol'];
-    $nrCol = $beste['nrCol'];
-
-    $rows = [];
-    try {
-        $selectAantal = $qtyCol !== '' ? "COALESCE(r.`$qtyCol`, 1)" : "1";
-
-        if ($nameCol !== '') {
-            $stmt = $conn->prepare("
-                SELECT TRIM(CAST(r.`$nameCol` AS CHAR)) AS productnaam,
-                       $selectAantal AS aantal
-                FROM `$table` r
-                WHERE r.`$orderCol` = :id
-                LIMIT 200
-            ");
-            $stmt->execute([':id' => $bestellingId]);
-            $rows = $stmt->fetchAll();
-        } elseif ($linkCol !== '') {
-            $joinCol = lowerTekst($linkCol) === 'link2' || preg_match('/link2/i', $linkCol) === 1 ? 'link2' : 'link';
-            $stmt = $conn->prepare("
-                SELECT TRIM(COALESCE(w.titel, CAST(r.`$linkCol` AS CHAR))) AS productnaam,
-                       $selectAantal AS aantal
-                FROM `$table` r
-                LEFT JOIN Winkel w ON w.`$joinCol` = r.`$linkCol`
-                WHERE r.`$orderCol` = :id
-                LIMIT 200
-            ");
-            $stmt->execute([':id' => $bestellingId]);
-            $rows = $stmt->fetchAll();
-        } elseif ($nrCol !== '') {
-            $stmt = $conn->prepare("
-                SELECT TRIM(COALESCE(w.titel, CAST(r.`$nrCol` AS CHAR))) AS productnaam,
-                       $selectAantal AS aantal
-                FROM `$table` r
-                LEFT JOIN Winkel w ON w.nr = r.`$nrCol`
-                WHERE r.`$orderCol` = :id
-                LIMIT 200
-            ");
-            $stmt->execute([':id' => $bestellingId]);
-            $rows = $stmt->fetchAll();
-        }
-    } catch (Throwable) {
-        $rows = [];
-    }
-
-    if (empty($rows)) {
-        return [
-            'gevonden' => false,
-            'artikelen' => [],
-            'bron' => $table,
-            'message' => 'Geen orderregels gevonden voor deze bestelling.',
-        ];
-    }
-
-    $samengevoegd = [];
-    foreach ($rows as $row) {
-        $naam = isset($row['productnaam']) ? trim((string) $row['productnaam']) : '';
-        $aantal = isset($row['aantal']) ? (int) $row['aantal'] : 1;
-        if ($aantal <= 0) {
-            $aantal = 1;
-        }
-        if ($naam === '') {
-            continue;
-        }
-        $key = lowerTekst($naam);
-        if (!isset($samengevoegd[$key])) {
-            $samengevoegd[$key] = [
-                'productnaam' => $naam,
-                'aantal' => 0,
-            ];
-        }
-        $samengevoegd[$key]['aantal'] += $aantal;
-    }
-
-    $artikelen = array_values($samengevoegd);
-    usort($artikelen, function ($a, $b) {
-        return strcmp((string) ($a['productnaam'] ?? ''), (string) ($b['productnaam'] ?? ''));
-    });
-
-    return [
-        'gevonden' => !empty($artikelen),
-        'artikelen' => $artikelen,
-        'bron' => $table,
-        'message' => '',
-    ];
 }
 
 // Hier voeren we de echte databasefunctie uit die OpenAI vraagt.
@@ -985,14 +601,9 @@ function voerInterneFunctieUit($conn, $functieNaam, $arguments)
             'message' => '',
         ];
         if ($resultaat !== false) {
-            $artikelenInfo = haalBestellingArtikelenOp($conn, $bestellingId);
-
-            if (
-                (bool) ($artikelenInfo['gevonden'] ?? false) === false
-                && isset($resultaat['items'])
-                && trim((string) $resultaat['items']) !== ''
-            ) {
-                $fallback = parseBestellingItemsTekst($resultaat['items']);
+            $itemsTekst = isset($resultaat['items']) ? trim((string) $resultaat['items']) : '';
+            if ($itemsTekst !== '') {
+                $fallback = parseBestellingItemsTekst($itemsTekst);
                 if (!empty($fallback)) {
                     $artikelenInfo = [
                         'gevonden' => true,
@@ -1000,7 +611,11 @@ function voerInterneFunctieUit($conn, $functieNaam, $arguments)
                         'bron' => 'Bestellingen.items',
                         'message' => '',
                     ];
+                } else {
+                    $artikelenInfo['message'] = 'Geen artikelregels gevonden in bestelling.';
                 }
+            } else {
+                $artikelenInfo['message'] = 'Geen items gevonden in bestelling.';
             }
         }
 
@@ -1047,11 +662,8 @@ function voerInterneFunctieUit($conn, $functieNaam, $arguments)
             }
         }
 
-        if ($artikelenInfo['bron'] !== '') {
-            schrijfWorkerLog('Bestelling ' . $bestellingId . ' artikelen bron: ' . $artikelenInfo['bron'] . ', count: ' . count((array) ($artikelenInfo['artikelen'] ?? [])));
-        } else {
-            schrijfWorkerLog('Bestelling ' . $bestellingId . ' artikelen niet gevonden. items_len=' . (isset($resultaat['items']) ? strlen((string) $resultaat['items']) : 0));
-        }
+        $itemsLen = is_array($resultaat) && isset($resultaat['items']) ? strlen((string) $resultaat['items']) : 0;
+        schrijfWorkerLog('Bestelling ' . $bestellingId . ' items_len=' . $itemsLen . ' artikelen_count=' . count((array) ($artikelenInfo['artikelen'] ?? [])));
 
         return [
             'functie' => 'zoek_bestelling',
