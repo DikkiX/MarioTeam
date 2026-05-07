@@ -34,15 +34,15 @@ Code-links in dit document zijn relatief (werken in GitHub én als je de repo lo
     - `zoek_productvoorraad` (voorraad/prijs/product info)
     - `zoek_bestelling` (order-status)
   - Regels:
-    - Bij vragen over “op voorraad/prijs/beschikbaar” wordt tool-gebruik afgedwongen zodat de bot niet gaat gokken ([worker.php:L1441](api/chat/worker.php#L1441)).
+    - Bij vragen over “op voorraad/prijs/beschikbaar” wordt tool-gebruik afgedwongen zodat de bot niet gaat gokken ([worker.php:L1072](api/chat/worker.php#L1072)).
   - Belangrijkste functies (handig om snel te vinden):
-    - Berichten/prompt opbouw: [maakBerichtenVoorOpenAi](api/chat/worker.php#L1315)
-    - system0 label ophalen: [haalAssistant0VoorBericht](api/chat/worker.php#L1204)
-    - system1 bouwen via includes: [bouwSystem1MetIncludes](api/chat/worker.php#L1257)
+    - Berichten/prompt opbouw: [maakBerichtenVoorOpenAi](api/chat/worker.php#L943)
+    - system0 label ophalen: [haalAssistant0VoorBericht](api/chat/worker.php#L832)
+    - system1 bouwen via includes: [bouwSystem1MetIncludes](api/chat/worker.php#L885)
     - Tool forcing order lookup: [bepaalGeforceerdeToolChoice](api/chat/worker.php#L165)
     - OpenAI call (met tools): [roepOpenAiAan](api/chat/worker.php#L186)
     - OpenAI call (system0, zonder tone): [roepOpenAiAanZonderTone](api/chat/worker.php#L278)
-    - Model mode mapping: [CHAT_MODEL_MODE handling](api/chat/worker.php#L214)
+    - Model mode mapping: [CHAT_MODEL_MODE handling](api/chat/worker.php#L209)
 
 ### Kennis / content (FAQ & tone of voice)
 - Tone-of-voice:
@@ -86,7 +86,7 @@ Code-links in dit document zijn relatief (werken in GitHub én als je de repo lo
     - `2` → `gpt-5-mini`
     - `3` → `gpt-4.1-mini`
 - In worker:
-  - [worker.php](api/chat/worker.php#L214)
+  - [worker.php](api/chat/worker.php#L209)
   - Leest `CHAT_MODEL_MODE` en gebruikt dezelfde mapping.
   - Default is mode `2` (dus standaard `gpt-5-mini`), zodat het gelijk loopt met ChatFunction.
 
@@ -123,6 +123,6 @@ Code-links in dit document zijn relatief (werken in GitHub én als je de repo lo
   - check of system0 goed labelt in [system0.php](include/ChatGPT/system0.php#L4)
 - Bot gokt over voorraad/prijs:
   - check worker log of `zoek_productvoorraad` wordt aangeroepen
-  - check tool forcing in [worker.php:L1441](api/chat/worker.php#L1441)
+  - check tool forcing in [worker.php:L1072](api/chat/worker.php#L1072)
 - Model/kwaliteit aanpassen:
   - zet `CHAT_MODEL_MODE=1` in `.env` (5.2) of `2` (5-mini) of `3` (4.1-mini)
