@@ -1,6 +1,11 @@
 <?php
 include_once $_SERVER['DOCUMENT_ROOT'] . '/include/db.inc';
 include_once $_SERVER['DOCUMENT_ROOT'] . '/include/env.php';
+$conn = $conn ?? null;
+if (!($conn instanceof PDO)) {
+    http_response_code(500);
+    exit('Database verbinding ontbreekt.');
+}
 
 session_start();
 
