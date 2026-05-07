@@ -348,11 +348,13 @@ function roepOpenAiAanZonderTone($messages, $tools = [], $toolChoice = 'auto', $
     return $decoded;
 }
 
+// Veiligheidscheck voor dynamische tabel/kolomnamen (we gebruiken dit bij "SHOW COLUMNS" en dynamische SELECTs).
 function isVeiligeDbNaam($name)
 {
     return is_string($name) && preg_match('/^[A-Za-z0-9_]+$/', $name) === 1;
 }
 
+// Kleine helper voor case-insensitive vergelijken (met UTF-8 support als mbstring aanwezig is).
 function lowerTekst($text)
 {
     $t = (string) $text;
@@ -362,6 +364,7 @@ function lowerTekst($text)
     return strtolower($t);
 }
 
+// Probeert tabellen te vinden met een naam die lijkt op een patroon (handig omdat schema's per site kunnen verschillen).
 function haalTabelNamenMetLike($conn, $like)
 {
     try {
@@ -380,6 +383,7 @@ function haalTabelNamenMetLike($conn, $like)
     }
 }
 
+// Leest kolomnamen van een tabel, zodat we kunnen "raden" welke kolom bijv. bestelling_id / productnaam / aantal is.
 function haalKolommenVoorTabel($conn, $table)
 {
     if (!isVeiligeDbNaam($table)) {
@@ -407,6 +411,7 @@ function haalKolommenVoorTabel($conn, $table)
     }
 }
 
+// Kleine helper om te checken of een kolom bestaat (wordt gebruikt bij schema-verschillen).
 function tabelHeeftKolom($conn, $table, $kolom)
 {
     if (!is_string($table) || $table === '' || !isVeiligeDbNaam($table)) {
@@ -425,6 +430,8 @@ function tabelHeeftKolom($conn, $table, $kolom)
     }
 }
 
+// Fallback parser: sommige DB's hebben geen losse orderregels-tabel.
+// Dan staat er soms een "items" tekstveld in Bestellingen, dat we proberen te ontleden.
 function parseBestellingItemsTekst($itemsTekst)
 {
     $t = trim((string) $itemsTekst);
@@ -504,6 +511,7 @@ function parseBestellingItemsTekst($itemsTekst)
     return $artikelen;
 }
 
+// Fallback parser: probeert verzendkosten/totaal uit dezelfde "items" tekst te halen.
 function parseBestellingKostenTekst($itemsTekst)
 {
     $t = trim((string) $itemsTekst);
@@ -551,6 +559,7 @@ function parseBestellingKostenTekst($itemsTekst)
     ];
 }
 
+// Probeert uit een tracktrace veld een echte track&trace code te halen.
 function haalTrackCodeUitTracktrace($tracktrace)
 {
     $tt = trim((string) $tracktrace);
@@ -576,6 +585,7 @@ function haalTrackCodeUitTracktrace($tracktrace)
     return '';
 }
 
+// Bestelling ophalen met een dynamische veldenlijst (zodat we netjes kunnen terugvallen als sommige kolommen niet bestaan).
 function haalBestellingOpMetVelden($conn, $bestellingId, $email, $velden)
 {
     $bestellingId = (int) $bestellingId;
@@ -602,6 +612,7 @@ function haalBestellingOpMetVelden($conn, $bestellingId, $email, $velden)
     return $stmt->fetch();
 }
 
+// Bestelling ophalen met fallback omdat de DB per project niet altijd dezelfde kolommen heeft.
 function haalBestellingOp($conn, $bestellingId, $email)
 {
     $basis = ['id', 'betaling', 'verzendkosten', 'totaal', 'totaal_site', 'status', 'verzending', 'datum', 'PayStatus', 'tracktrace'];
@@ -630,6 +641,7 @@ function haalBestellingOp($conn, $bestellingId, $email)
     }
 }
 
+// Probeert artikelen/orderregels bij een bestelling te vinden, ook als de tabel/kolomnamen anders heten.
 function haalBestellingArtikelenOp($conn, $bestellingId)
 {
     $bestellingId = (int) $bestellingId;
@@ -697,6 +709,8 @@ function haalBestellingArtikelenOp($conn, $bestellingId)
     ];
 
     $candidateTables = [];
+    // Eerst zoeken we naar tabellen die op een orderregels-tabel lijken (via LIKE),
+    // daarna voegen we een vaste lijst met veelvoorkomende namen toe.
     foreach (['Bestel%', 'Bestelling%', 'Order%'] as $like) {
         foreach (haalTabelNamenMetLike($conn, $like) as $t) {
             $candidateTables[$t] = true;
@@ -722,6 +736,8 @@ function haalBestellingArtikelenOp($conn, $bestellingId)
         $candidateTables[$fixed] = true;
     }
 
+    // We scoren elke kandidaat-tabel op: heeft hij een bestelling-id kolom, plus (liefst) aantal/naam/link/productnr kolommen.
+    // De beste match gebruiken we voor de SELECT.
     $beste = [
         'table' => '',
         'score' => -1,
