@@ -658,6 +658,76 @@ function normaliseerTekst($text)
     return trim((string) $text);
 }
 
+function haalKennisUitContactPaginaVoorEmailAi()
+{
+    $docRoot = isset($_SERVER['DOCUMENT_ROOT']) ? (string) $_SERVER['DOCUMENT_ROOT'] : '';
+    if ($docRoot === '') {
+        return '';
+    }
+
+    $pathMijnEmail = $docRoot . '/include/mijnemail_universeel.inc';
+    $pathContact = $docRoot . '/include/contact.inc';
+
+    if (!is_file($pathMijnEmail) && !is_file($pathContact)) {
+        return '';
+    }
+
+    $bodymain3 = '';
+
+    set_error_handler(function () {
+        return true;
+    });
+
+    ob_start();
+    if (is_file($pathMijnEmail)) {
+        include_once $pathMijnEmail;
+    }
+    if (is_file($pathContact)) {
+        include_once $pathContact;
+    }
+    $echoed = ob_get_clean();
+
+    restore_error_handler();
+
+    $html = '';
+    if (is_string($bodymain3) && trim($bodymain3) !== '') {
+        $html .= $bodymain3;
+    }
+    if (is_string($echoed) && trim($echoed) !== '') {
+        $html .= "\n" . $echoed;
+    }
+
+    $html = trim((string) $html);
+    if ($html === '') {
+        return '';
+    }
+
+    $t = str_replace(["\r\n", "\r"], "\n", $html);
+    $t = preg_replace('/<\s*head\b[^>]*>[\s\S]*?<\s*\/\s*head\s*>/i', '', (string) $t);
+    $t = preg_replace('/<\s*style\b[^>]*>[\s\S]*?<\s*\/\s*style\s*>/i', '', (string) $t);
+    $t = preg_replace('/<\s*script\b[^>]*>[\s\S]*?<\s*\/\s*script\s*>/i', '', (string) $t);
+    $t = preg_replace('/<\s*br\s*\/?\s*>/i', "\n", (string) $t);
+    $t = preg_replace('/<\/\s*p\s*>/i', "\n\n", (string) $t);
+    $t = preg_replace('/<\/\s*tr\s*>/i', "\n", (string) $t);
+    $t = preg_replace('/<\/\s*div\s*>/i', "\n", (string) $t);
+    $t = strip_tags((string) $t);
+    $t = html_entity_decode((string) $t, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+    $t = preg_replace("/[ \t]+\n/", "\n", (string) $t);
+    $t = preg_replace("/\n{3,}/", "\n\n", (string) $t);
+    $t = trim((string) $t);
+
+    if ($t === '') {
+        return '';
+    }
+
+    if (strlen($t) > 8000) {
+        $t = substr($t, 0, 8000);
+        $t = rtrim($t);
+    }
+
+    return $t;
+}
+
 function stripQuotedEnHandtekeningTekst($text)
 {
     $t = normaliseerTekst($text);
@@ -1032,6 +1102,10 @@ function roepOpenAiAanVoorEmailConcept($onderwerp, $klantTekst, $extraInstructie
     }
     if (is_string($extraInstructies) && trim($extraInstructies) !== '') {
         $system .= "\n\nExtra regels/instructies:\n" . trim($extraInstructies);
+    }
+    $kennis = haalKennisUitContactPaginaVoorEmailAi();
+    if (is_string($kennis) && trim($kennis) !== '') {
+        $system .= "\n\nRelevante informatie (contact/werktijden/bedrijfsgegevens):\n" . trim($kennis);
     }
     $user = "Onderwerp: " . (string) $onderwerp;
     if (is_string($threadContext) && trim($threadContext) !== '') {
