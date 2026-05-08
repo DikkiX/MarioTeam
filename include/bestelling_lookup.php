@@ -1,5 +1,14 @@
 <?php
 
+// Dit bestand bevat gedeelde “order lookup” helpers.
+// Het wordt gebruikt door:
+// - Chatbot worker (api/chat/worker.php) via de tool `zoek_bestelling`
+// - EmailDashboard (EmailDashboard.php) om orderdata alvast op te halen vóór de AI-call (US23)
+//
+// Doel: 1 plek voor order-queries + parsing, zodat je het niet dubbel onderhoudt.
+// Dit hoort bewust in /include (gedeelde helper) en niet in /api (endpoint).
+
+// Kleine helper: maak tekst lowercase (met UTF-8 support als mbstring aanwezig is).
 function lowerTekst($text)
 {
     $t = (string) $text;
@@ -9,6 +18,8 @@ function lowerTekst($text)
     return strtolower($t);
 }
 
+// Zet de tekst uit Bestellingen.items om naar een lijst met artikelen.
+// Output: array van items met { productnaam, aantal, prijs_euro? }.
 function parseBestellingItemsTekst($itemsTekst)
 {
     $t = trim((string) $itemsTekst);
@@ -88,53 +99,9 @@ function parseBestellingItemsTekst($itemsTekst)
     return $artikelen;
 }
 
-function parseBestellingKostenTekst($itemsTekst)
-{
-    $t = trim((string) $itemsTekst);
-    if ($t === '') {
-        return [
-            'verzendkosten_euro' => null,
-            'totaal_euro' => null,
-        ];
-    }
-
-    $t = str_replace(["\r\n", "\r"], "\n", $t);
-    $t = preg_replace('/<\s*br\s*\/?\s*>/i', "\n", $t);
-    $t = strip_tags($t);
-    $t = html_entity_decode($t, ENT_QUOTES | ENT_HTML5, 'UTF-8');
-
-    $verzend = null;
-    $totaal = null;
-    $delen = preg_split('/\n+/', $t);
-    if (!is_array($delen)) {
-        $delen = [$t];
-    }
-
-    foreach ($delen as $deel) {
-        $regel = trim((string) $deel);
-        if ($regel === '') {
-            continue;
-        }
-        if (preg_match('/^verzendkosten\s*:\s*([\d.,]+)\s*euro\s*$/i', $regel, $m) === 1) {
-            $raw = str_replace(',', '.', (string) $m[1]);
-            if (is_numeric($raw)) {
-                $verzend = (float) $raw;
-            }
-        }
-        if (preg_match('/^totaal\s*:\s*([\d.,]+)\s*euro\s*$/i', $regel, $m) === 1) {
-            $raw = str_replace(',', '.', (string) $m[1]);
-            if (is_numeric($raw)) {
-                $totaal = (float) $raw;
-            }
-        }
-    }
-
-    return [
-        'verzendkosten_euro' => $verzend,
-        'totaal_euro' => $totaal,
-    ];
-}
-
+// Probeert uit een “tracktrace” veld een echte Track&Trace code te halen.
+// In de Bestellingen tabel lijkt dit een '|' gescheiden string te zijn (bijv. "|||9|3SGDWQ838080473").
+// We pakken daarom de laatste “code-achtige” waarde.
 function haalTrackCodeUitTracktrace($tracktrace)
 {
     $tt = trim((string) $tracktrace);
@@ -160,43 +127,46 @@ function haalTrackCodeUitTracktrace($tracktrace)
     return '';
 }
 
+// Haal 1 bestelling op uit de DB, op basis van (bestelling_id + email).
+// Belangrijk: we doen hier expres een match op email om privacy te beschermen.
 function haalBestellingOp($conn, $bestellingId, $email)
 {
-    try {
-        $bestellingId = (int) $bestellingId;
-        $email = trim((string) $email);
-        if ($bestellingId <= 0 || $email === '') {
-            return false;
-        }
-
-        $stmt = $conn->prepare("
-            SELECT
-                id,
-                betaling,
-                verzendkosten,
-                totaal,
-                totaal_site,
-                status,
-                verzending,
-                datum,
-                PayStatus,
-                tracktrace,
-                items,
-                inpakdatum
-            FROM Bestellingen
-            WHERE id = :id AND mail = :email
-            LIMIT 1
-        ");
-        $stmt->execute([
-            ':id' => $bestellingId,
-            ':email' => $email,
-        ]);
-        return $stmt->fetch();
-    } catch (Throwable) {
+    $bestellingId = (int) $bestellingId;
+    $email = trim((string) $email);
+    if ($bestellingId <= 0 || $email === '') {
         return false;
     }
+
+    $stmt = $conn->prepare("
+        SELECT
+            id,
+            betaling,
+            verzendkosten,
+            totaal,
+            totaal_site,
+            status,
+            verzending,
+            datum,
+            PayStatus,
+            tracktrace,
+            items,
+            inpakdatum
+        FROM Bestellingen
+        WHERE id = :id AND mail = :email
+        LIMIT 1
+    ");
+    $stmt->execute([
+        ':id' => $bestellingId,
+        ':email' => $email,
+    ]);
+    $row = $stmt->fetch();
+    return $row ? $row : false;
 }
 
+// Hoofdfunctie: haalt orderdata op en geeft ruwe data terug.
+// - Geen “mooie klanttekst” hier: dat doet de AI.
+// - Veilig: als id+email niet matchen, komt er niets terug.
+// - Bij fout: returnt een nette melding zonder privédata.
 function zoekBestellingRuw($conn, $bestellingId, $email)
 {
     $bestellingId = (int) $bestellingId;
@@ -210,27 +180,14 @@ function zoekBestellingRuw($conn, $bestellingId, $email)
     }
 
     try {
-        $validatieStmt = $conn->prepare("
-            SELECT id
-            FROM Bestellingen
-            WHERE id = :id AND mail = :email
-            LIMIT 1
-        ");
-        $validatieStmt->execute([
-            ':id' => $bestellingId,
-            ':email' => $email,
-        ]);
-        $validatieResultaat = $validatieStmt->fetch();
-
-        if (!$validatieResultaat) {
+        $resultaat = haalBestellingOp($conn, $bestellingId, $email);
+        if ($resultaat === false) {
             return [
                 'functie' => 'zoek_bestelling',
                 'gevonden' => false,
                 'message' => 'De combinatie van bestelling_id en email klopt niet.',
             ];
         }
-
-        $resultaat = haalBestellingOp($conn, $bestellingId, $email);
 
         $artikelenInfo = [
             'gevonden' => false,
@@ -284,22 +241,6 @@ function zoekBestellingRuw($conn, $bestellingId, $email)
             $resultaat['track_code'] = $trackCode;
         }
 
-        if (is_array($resultaat) && isset($resultaat['items']) && trim((string) $resultaat['items']) !== '') {
-            $kostenUitItems = parseBestellingKostenTekst($resultaat['items']);
-            if (
-                (!isset($resultaat['verzendkosten']) || (float) $resultaat['verzendkosten'] <= 0)
-                && $kostenUitItems['verzendkosten_euro'] !== null
-            ) {
-                $resultaat['verzendkosten'] = $kostenUitItems['verzendkosten_euro'];
-            }
-            if (
-                (!isset($resultaat['totaal']) || (float) $resultaat['totaal'] <= 0)
-                && $kostenUitItems['totaal_euro'] !== null
-            ) {
-                $resultaat['totaal'] = $kostenUitItems['totaal_euro'];
-            }
-        }
-
         return [
             'functie' => 'zoek_bestelling',
             'gevonden' => $resultaat !== false,
@@ -317,4 +258,3 @@ function zoekBestellingRuw($conn, $bestellingId, $email)
         ];
     }
 }
-

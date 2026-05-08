@@ -33,16 +33,19 @@ Code-links in dit document zijn relatief (werken in GitHub én als je de repo lo
   - Kan ook interne tools gebruiken:
     - `zoek_productvoorraad` (voorraad/prijs/product info)
     - `zoek_bestelling` (order-status)
+  - Order lookup helpers (gedeeld met EmailDashboard):
+    - [bestelling_lookup.php](include/bestelling_lookup.php)
+    - Worker gebruikt hiervoor de functie `zoekBestellingRuw(...)` uit dat bestand.
   - Regels:
-    - Bij vragen over “op voorraad/prijs/beschikbaar” wordt tool-gebruik afgedwongen zodat de bot niet gaat gokken ([worker.php:L1072](api/chat/worker.php#L1072)).
+    - Bij vragen over “op voorraad/prijs/beschikbaar” wordt tool-gebruik afgedwongen zodat de bot niet gaat gokken ([worker.php:L736](api/chat/worker.php#L736)).
   - Belangrijkste functies (handig om snel te vinden):
-    - Berichten/prompt opbouw: [maakBerichtenVoorOpenAi](api/chat/worker.php#L943)
-    - system0 label ophalen: [haalAssistant0VoorBericht](api/chat/worker.php#L832)
-    - system1 bouwen via includes: [bouwSystem1MetIncludes](api/chat/worker.php#L885)
-    - Tool forcing order lookup: [bepaalGeforceerdeToolChoice](api/chat/worker.php#L165)
-    - OpenAI call (met tools): [roepOpenAiAan](api/chat/worker.php#L186)
-    - OpenAI call (system0, zonder tone): [roepOpenAiAanZonderTone](api/chat/worker.php#L278)
-    - Model mode mapping: [CHAT_MODEL_MODE handling](api/chat/worker.php#L209)
+    - Berichten/prompt opbouw: [maakBerichtenVoorOpenAi](api/chat/worker.php#L608)
+    - system0 label ophalen: [haalAssistant0VoorBericht](api/chat/worker.php#L497)
+    - system1 bouwen via includes: [bouwSystem1MetIncludes](api/chat/worker.php#L550)
+    - Tool forcing order lookup: [bepaalGeforceerdeToolChoice](api/chat/worker.php#L167)
+    - OpenAI call (met tools): [roepOpenAiAan](api/chat/worker.php#L188)
+    - OpenAI call (system0, zonder tone): [roepOpenAiAanZonderTone](api/chat/worker.php#L263)
+    - Model mode mapping: [CHAT_MODEL_MODE handling](api/chat/worker.php#L211)
 
 ### Kennis / content (FAQ & tone of voice)
 - Tone-of-voice:
@@ -86,7 +89,7 @@ Code-links in dit document zijn relatief (werken in GitHub én als je de repo lo
     - `2` → `gpt-5-mini`
     - `3` → `gpt-4.1-mini`
 - In worker:
-  - [worker.php](api/chat/worker.php#L209)
+  - [worker.php](api/chat/worker.php#L211)
   - Leest `CHAT_MODEL_MODE` en gebruikt dezelfde mapping.
   - Default is mode `2` (dus standaard `gpt-5-mini`), zodat het gelijk loopt met ChatFunction.
 
@@ -111,12 +114,16 @@ Code-links in dit document zijn relatief (werken in GitHub én als je de repo lo
 
 ### OpenAI call voor e-mailconcepten
 - Functie:
-  - [roepOpenAiAanVoorEmailConcept](EmailDashboard.php#L1220) in [EmailDashboard.php](EmailDashboard.php)
+  - [roepOpenAiAanVoorEmailConcept](EmailDashboard.php#L1336) in [EmailDashboard.php](EmailDashboard.php)
 - Model:
   - Gebruikt ook `CHAT_MODEL_MODE` uit `.env` (zelfde mapping als chat).
 - Let op (verschil met chat):
   - De chat-worker kan tools/function-calling gebruiken (order/voorraad).
-  - Het e-mailconcept gebruikt nu de centrale helper [ChatFunction.php](include/ChatFunction.php) (`CHATGPT(...)`) en maakt één antwoord per mail.
+  - Het e-mailconcept gebruikt de centrale helper [ChatFunction.php](include/ChatFunction.php) (`CHATGPT(...)`) en maakt één antwoord per mail.
+  - US23: voor ordervragen doet EmailDashboard eerst zelf een DB lookup (bestelnummer + email) en stuurt die feiten mee naar de AI:
+    - Helpers: [bestelling_lookup.php](include/bestelling_lookup.php)
+    - Extractie uit mail: [extracteerBestelEnEmailUitTekst](EmailDashboard.php#L1117)
+    - AI call: [roepOpenAiAanVoorEmailConcept](EmailDashboard.php#L1336)
 
 ### System0 in e-mail (alleen als je het echt gebruikt)
 - System0 is een extra AI-stap die een label teruggeeft zoals “Zending” of “Service”.

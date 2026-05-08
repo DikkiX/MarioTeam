@@ -11,6 +11,12 @@ Dit is de codebase van Mario Team (o.a. de chat op de website + het e-maildashbo
   - Worker: [api/chat/worker.php](api/chat/worker.php)
 - E-maildashboard: [EmailDashboard.php](EmailDashboard.php)
 
+## Mappen (kort)
+
+- `api/` = echte endpoints (URL’s) die je aanroept vanuit de browser of via HTTP.
+- `include/` = gedeelde helpers/includes die je in meerdere scripts hergebruikt (geen endpoints).
+- Gedeelde order lookup (chat + e-mail): [include/bestelling_lookup.php](include/bestelling_lookup.php)
+
 ## Belangrijkste instellingen
 
 Deze keys staan in `.env` (niet committen):

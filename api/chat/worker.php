@@ -1,5 +1,6 @@
 <?php
 include_once $_SERVER['DOCUMENT_ROOT'] . '/include/db.inc';
+// Gedeelde order-lookup (wordt ook door EmailDashboard gebruikt).
 include_once $_SERVER['DOCUMENT_ROOT'] . '/include/bestelling_lookup.php';
 ignore_user_abort(true);
 set_time_limit(0);
@@ -323,124 +324,21 @@ function roepOpenAiAanZonderTone($messages, $tools = [], $toolChoice = 'auto', $
 function voerInterneFunctieUit($conn, $functieNaam, $arguments)
 {
     if ($functieNaam === 'zoek_bestelling') {
-        // Voor orderdata eisen we nu altijd 2 gegevens:
-        // bestelnummer + hetzelfde e-mailadres als in de bestelling.
+        // De echte order lookup staat gedeeld in include/bestelling_lookup.php.
+        // Zo is de logica identiek voor chat én e-mailconcepten en onderhoud je het maar op 1 plek.
         $bestellingId = isset($arguments['bestelling_id']) ? (int) $arguments['bestelling_id'] : 0;
         $email = isset($arguments['email']) ? trim((string) $arguments['email']) : '';
 
-        if ($bestellingId <= 0 || $email === '') {
-            schrijfWorkerLog('Bestelling-validatie mislukt: bestelnummer of e-mail ontbreekt.');
-            return [
-                'functie' => 'zoek_bestelling',
-                'gevonden' => false,
-                'message' => 'Voor orderdata zijn zowel bestelling_id als email verplicht.',
-            ];
+        $result = zoekBestellingRuw($conn, $bestellingId, $email);
+
+        $resultaat = isset($result['resultaat']) && is_array($result['resultaat']) ? $result['resultaat'] : [];
+        $itemsLen = isset($resultaat['items']) ? strlen((string) $resultaat['items']) : 0;
+        $artikelenCount = count((array) ($result['artikelen'] ?? []));
+        if ($bestellingId > 0) {
+            schrijfWorkerLog('Bestelling ' . $bestellingId . ' items_len=' . $itemsLen . ' artikelen_count=' . $artikelenCount);
         }
 
-        // Eerst controleren we of het bestelnummer echt bij dit e-mailadres hoort.
-        $validatieStmt = $conn->prepare("
-            SELECT id
-            FROM Bestellingen
-            WHERE id = :id AND mail = :email
-            LIMIT 1
-        ");
-        $validatieStmt->execute([
-            ':id' => $bestellingId,
-            ':email' => $email,
-        ]);
-        $validatieResultaat = $validatieStmt->fetch();
-
-        if (!$validatieResultaat) {
-            schrijfWorkerLog('Bestelling-validatie mislukt voor bestelling ' . $bestellingId . '.');
-            return [
-                'functie' => 'zoek_bestelling',
-                'gevonden' => false,
-                'message' => 'De combinatie van bestelling_id en email klopt niet.',
-            ];
-        }
-
-        $resultaat = haalBestellingOp($conn, $bestellingId, $email);
-
-        $artikelenInfo = [
-            'gevonden' => false,
-            'artikelen' => [],
-            'bron' => '',
-            'message' => '',
-        ];
-        if ($resultaat !== false) {
-            $itemsTekst = isset($resultaat['items']) ? trim((string) $resultaat['items']) : '';
-            if ($itemsTekst !== '') {
-                $fallback = parseBestellingItemsTekst($itemsTekst);
-                if (!empty($fallback)) {
-                    $artikelenInfo = [
-                        'gevonden' => true,
-                        'artikelen' => $fallback,
-                        'bron' => 'Bestellingen.items',
-                        'message' => '',
-                    ];
-                } else {
-                    $artikelenInfo['message'] = 'Geen artikelregels gevonden in bestelling.';
-                }
-            } else {
-                $artikelenInfo['message'] = 'Geen items gevonden in bestelling.';
-            }
-        }
-
-        $verzendStatus = 'onbekend';
-        $tracktrace = is_array($resultaat) && isset($resultaat['tracktrace']) ? trim((string) $resultaat['tracktrace']) : '';
-        $statusTekst = is_array($resultaat) && isset($resultaat['status']) ? trim((string) $resultaat['status']) : '';
-        $verzendingTekst = is_array($resultaat) && isset($resultaat['verzending']) ? trim((string) $resultaat['verzending']) : '';
-        $trackCode = haalTrackCodeUitTracktrace($tracktrace);
-
-        $heeftVerzendTekst = $verzendingTekst !== '' && preg_match('/\bverzonden\b/i', $verzendingTekst) === 1;
-        $heeftInpakDatum = is_array($resultaat) && isset($resultaat['inpakdatum']) && (int) $resultaat['inpakdatum'] > 0;
-        $statusIsVerzonden = $statusTekst === '3';
-
-        if ($trackCode !== '') {
-            $verzendStatus = 'verzonden';
-        } elseif ($statusIsVerzonden) {
-            $verzendStatus = 'verzonden';
-        } elseif ($heeftVerzendTekst) {
-            $verzendStatus = 'verzonden';
-        } elseif ($heeftInpakDatum) {
-            $verzendStatus = 'niet_verzonden';
-        } else {
-            $verzendStatus = 'niet_verzonden';
-        }
-
-        if (is_array($resultaat)) {
-            $resultaat['verzend_status'] = $verzendStatus;
-            $resultaat['track_code'] = $trackCode;
-        }
-
-        if (is_array($resultaat) && isset($resultaat['items']) && trim((string) $resultaat['items']) !== '') {
-            $kostenUitItems = parseBestellingKostenTekst($resultaat['items']);
-            if (
-                (!isset($resultaat['verzendkosten']) || (float) $resultaat['verzendkosten'] <= 0)
-                && $kostenUitItems['verzendkosten_euro'] !== null
-            ) {
-                $resultaat['verzendkosten'] = $kostenUitItems['verzendkosten_euro'];
-            }
-            if (
-                (!isset($resultaat['totaal']) || (float) $resultaat['totaal'] <= 0)
-                && $kostenUitItems['totaal_euro'] !== null
-            ) {
-                $resultaat['totaal'] = $kostenUitItems['totaal_euro'];
-            }
-        }
-
-        $itemsLen = is_array($resultaat) && isset($resultaat['items']) ? strlen((string) $resultaat['items']) : 0;
-        schrijfWorkerLog('Bestelling ' . $bestellingId . ' items_len=' . $itemsLen . ' artikelen_count=' . count((array) ($artikelenInfo['artikelen'] ?? [])));
-
-        return [
-            'functie' => 'zoek_bestelling',
-            'gevonden' => $resultaat !== false,
-            'resultaat' => $resultaat,
-            'artikelen' => $artikelenInfo['artikelen'] ?? [],
-            'artikelen_gevonden' => (bool) ($artikelenInfo['gevonden'] ?? false),
-            'artikelen_bron' => (string) ($artikelenInfo['bron'] ?? ''),
-            'artikelen_message' => (string) ($artikelenInfo['message'] ?? ''),
-        ];
+        return $result;
     }
 
     if ($functieNaam === 'zoek_productvoorraad') {

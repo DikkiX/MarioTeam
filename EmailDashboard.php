@@ -2,6 +2,7 @@
 include_once $_SERVER['DOCUMENT_ROOT'] . '/include/db.inc';
 include_once $_SERVER['DOCUMENT_ROOT'] . '/include/env.php';
 include_once $_SERVER['DOCUMENT_ROOT'] . '/include/ChatFunction.php';
+// Gedeelde order-lookup helpers (wordt ook door de chat-worker gebruikt).
 include_once $_SERVER['DOCUMENT_ROOT'] . '/include/bestelling_lookup.php';
 $conn = $conn ?? null;
 if (!($conn instanceof PDO)) {
@@ -1115,6 +1116,12 @@ function formatteerGmailOntvangstTijdVoorDashboard($gmailMessageData, $headers)
 
 function extracteerBestelEnEmailUitTekst($text)
 {
+    // Deze functie probeert uit vrije tekst 2 dingen te halen:
+    // 1) E-mailadres (voor privacy-check in de DB)
+    // 2) Bestelnummer (de order id in onze database)
+    //
+    // We zijn bewust “simpel”: we zoeken alleen een nummer als er ook woorden zoals
+    // "bestelnummer/bestelling/order" in de tekst staan. Dan pakken we het eerste nummer.
     $t = (string) $text;
     $email = '';
     if (preg_match('/[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}/i', $t, $m) === 1) {
@@ -1139,6 +1146,8 @@ function extracteerBestelEnEmailUitTekst($text)
 
 function bouwOrderContextTekstVoorAi($orderResult)
 {
+    // Dit zet ruwe orderdata om naar een kort tekstblok.
+    // Dat tekstblok sturen we mee als "feiten" zodat de AI niet hoeft te gokken.
     if (!is_array($orderResult) || empty($orderResult['gevonden'])) {
         return '';
     }
@@ -1335,6 +1344,8 @@ function roepOpenAiAanVoorEmailConcept($onderwerp, $klantTekst, $extraInstructie
 
     $model = function_exists('getChatModelName') ? getChatModelName() : 'gpt-4.1-mini';
 
+    // Belangrijk: we willen geen tijd verspillen met "kunt u dit bevestigen?" als het al in de mail staat.
+    // Daarom: ontbrekende gegevens vragen, maar aanwezige gegevens direct gebruiken.
     $system = 'Je schrijft een concept-antwoord voor de klantenservice van de webshops van MarioTeam. Schrijf in het Nederlands. Als informatie ontbreekt, stel eerst korte, duidelijke vragen. Geef geen exacte voorraadaantallen. Als de klant om ordergegevens vraagt: vraag alleen om ontbrekende gegevens (bestelnummer en/of e-mailadres). Als ze al in de tekst staan, vraag niet om bevestiging maar gebruik ze. Als er orderdata uit de database is meegegeven, baseer je antwoord daarop en verzin niets. Als de klant naar actuele prijs/voorraad vraagt, zeg dat je dat niet live kunt checken in e-mail en verwijs naar de website of de chat. Geef alleen het antwoord (geen uitleg over je stappen).';
     $tone = '';
     try {
@@ -1356,6 +1367,8 @@ function roepOpenAiAanVoorEmailConcept($onderwerp, $klantTekst, $extraInstructie
         $system .= "\n\nRelevante informatie (FAQ/contact/werktijden/bedrijfsgegevens):\n" . trim($kennis);
     }
 
+    // US23: als de klant zijn bestelnummer + e-mailadres al geeft, halen we orderdata direct uit de DB.
+    // Zo kan de AI meteen een feitelijk concept maken (zonder dat de medewerker zelf moet zoeken).
     $orderInfo = extracteerBestelEnEmailUitTekst($klantTekst);
     $bestellingId = isset($orderInfo['bestelling_id']) ? (int) $orderInfo['bestelling_id'] : 0;
     $emailInTekst = isset($orderInfo['email']) ? (string) $orderInfo['email'] : '';
@@ -1368,9 +1381,11 @@ function roepOpenAiAanVoorEmailConcept($onderwerp, $klantTekst, $extraInstructie
                     $system .= "\n\nOrdergegevens uit database:\n" . $orderText;
                 }
             } else {
+                // Niets gevonden: geen hallucinaties. De AI krijgt een duidelijke instructie om te vragen om controle.
                 $system .= "\n\nOrder lookup:\nNiet gevonden voor de opgegeven combinatie. Vraag de klant om bestelnummer en e-mailadres te controleren.";
             }
         } catch (Throwable) {
+            // Fout in lookup: geen crash. We geven de AI alleen een fallback instructie (geen privédata loggen).
             $system .= "\n\nOrder lookup:\nNiet beschikbaar. Schrijf een standaard antwoord zonder orderdetails.";
         }
     }
@@ -1380,6 +1395,7 @@ function roepOpenAiAanVoorEmailConcept($onderwerp, $klantTekst, $extraInstructie
     }
     $user .= "\n\nLaatste klantmail:\n" . (string) $klantTekst;
     if ($bestellingId > 0 || $emailInTekst !== '') {
+        // Dit is een korte “samenvatting” voor de AI zodat hij de gegevens niet over het hoofd ziet.
         $user .= "\n\nGegeven gegevens:";
         if ($bestellingId > 0) {
             $user .= "\n- Bestelnummer: " . (string) $bestellingId;
