@@ -1346,7 +1346,7 @@ function roepOpenAiAanVoorEmailConcept($onderwerp, $klantTekst, $extraInstructie
 
     // Belangrijk: we willen geen tijd verspillen met "kunt u dit bevestigen?" als het al in de mail staat.
     // Daarom: ontbrekende gegevens vragen, maar aanwezige gegevens direct gebruiken.
-    $system = 'Je schrijft een concept-antwoord voor de klantenservice van de webshops van MarioTeam. Schrijf in het Nederlands. Als informatie ontbreekt, stel eerst korte, duidelijke vragen. Geef geen exacte voorraadaantallen. Als de klant om ordergegevens vraagt: vraag alleen om ontbrekende gegevens (bestelnummer en/of e-mailadres). Als ze al in de tekst staan, vraag niet om bevestiging maar gebruik ze. Als er orderdata uit de database is meegegeven, baseer je antwoord daarop en verzin niets. Als de klant naar actuele prijs/voorraad vraagt, zeg dat je dat niet live kunt checken in e-mail en verwijs naar de website of de chat. Geef alleen het antwoord (geen uitleg over je stappen).';
+    $system = 'Je schrijft een concept-antwoord voor de klantenservice van de webshops van MarioTeam. Schrijf in het Nederlands. Als informatie ontbreekt, stel eerst korte, duidelijke vragen. Geef geen exacte voorraadaantallen. Als de klant om ordergegevens vraagt: vraag alleen om ontbrekende gegevens (bestelnummer en/of e-mailadres). Als ze al in de tekst staan, vraag niet om bevestiging maar gebruik ze. Als er orderdata uit de database is meegegeven, baseer je antwoord daarop en verzin niets. Als er geen orderdata is meegegeven (niet gevonden of lookup niet beschikbaar), zeg dan dat je de bestelling met die combinatie niet kunt vinden en vraag de klant om te controleren. Zeg in dat geval niet dat de bestelling bestaat/ontvangen is en noem geen verzendstatus of track&trace. Als de klant naar actuele prijs/voorraad vraagt, zeg dat je dat niet live kunt checken in e-mail en verwijs naar de website of de chat. Geef alleen het antwoord (geen uitleg over je stappen).';
     $tone = '';
     try {
         if (isset($conn) && $conn) {
@@ -1382,11 +1382,11 @@ function roepOpenAiAanVoorEmailConcept($onderwerp, $klantTekst, $extraInstructie
                 }
             } else {
                 // Niets gevonden: geen hallucinaties. De AI krijgt een duidelijke instructie om te vragen om controle.
-                $system .= "\n\nOrder lookup:\nNiet gevonden voor de opgegeven combinatie. Vraag de klant om bestelnummer en e-mailadres te controleren.";
+                $system .= "\n\nOrder lookup:\nNIET GEVONDEN voor de opgegeven combinatie. Zeg dat je de bestelling met deze gegevens niet kunt vinden en vraag de klant om bestelnummer en e-mailadres te controleren.";
             }
         } catch (Throwable) {
             // Fout in lookup: geen crash. We geven de AI alleen een fallback instructie (geen privédata loggen).
-            $system .= "\n\nOrder lookup:\nNiet beschikbaar. Schrijf een standaard antwoord zonder orderdetails.";
+            $system .= "\n\nOrder lookup:\nNIET BESCHIKBAAR. Geef geen orderstatus/track&trace en vraag de klant om bestelnummer en e-mailadres te controleren.";
         }
     }
     $user = "Onderwerp: " . (string) $onderwerp;
@@ -1872,6 +1872,7 @@ function runEmailSyncOnce($conn, $maxResults = 5)
             if (!tabelHeeftKolom($conn, 'email_concepten', 'onderwerp')) {
                 return;
             }
+            $heeftOntvangenGmail = tabelHeeftKolom($conn, 'email_concepten', 'ontvangen_op_gmail');
         } catch (Throwable) {
             return;
         }
@@ -1884,11 +1885,14 @@ function runEmailSyncOnce($conn, $maxResults = 5)
             $limit = 30;
         }
 
+        $where = "status = 'draft' AND (onderwerp IS NULL OR onderwerp = '')";
+        if ($heeftOntvangenGmail) {
+            $where = "status = 'draft' AND ((onderwerp IS NULL OR onderwerp = '') OR (ontvangen_op_gmail IS NULL OR ontvangen_op_gmail = ''))";
+        }
         $stmt = $conn->prepare("
             SELECT id, gmail_thread_id
             FROM email_concepten
-            WHERE status = 'draft'
-              AND (onderwerp IS NULL OR onderwerp = '')
+            WHERE $where
             ORDER BY created_at DESC
             LIMIT :lim
         ");
@@ -1908,7 +1912,6 @@ function runEmailSyncOnce($conn, $maxResults = 5)
 
             $t = gmailApiRequest('GET', 'users/me/threads/' . rawurlencode($threadId), $accessToken, null, [
                 'format' => 'metadata',
-                'metadataHeaders' => 'Subject',
             ]);
             if (empty($t['ok']) || !isset($t['data']['messages']) || !is_array($t['data']['messages'])) {
                 continue;
@@ -1920,17 +1923,27 @@ function runEmailSyncOnce($conn, $maxResults = 5)
                 continue;
             }
 
-            $sub = haalHeaderOp($last['payload']['headers'], 'Subject');
+            $headers = $last['payload']['headers'];
+
+            $sub = haalHeaderOp($headers, 'Subject');
             $sub = is_string($sub) ? trim($sub) : '';
-            if ($sub === '') {
-                continue;
+            $ontvangenOpGmail = $heeftOntvangenGmail ? formatteerGmailOntvangstTijdVoorDashboard($last, $headers) : '';
+
+            if ($sub !== '') {
+                $upd = $conn->prepare("UPDATE email_concepten SET onderwerp = :o WHERE id = :id AND (onderwerp IS NULL OR onderwerp = '')");
+                $upd->execute([
+                    ':o' => $sub,
+                    ':id' => $id,
+                ]);
             }
 
-            $upd = $conn->prepare("UPDATE email_concepten SET onderwerp = :o WHERE id = :id AND (onderwerp IS NULL OR onderwerp = '')");
-            $upd->execute([
-                ':o' => $sub,
-                ':id' => $id,
-            ]);
+            if ($heeftOntvangenGmail && $ontvangenOpGmail !== '') {
+                $upd2 = $conn->prepare("UPDATE email_concepten SET ontvangen_op_gmail = :d WHERE id = :id AND (ontvangen_op_gmail IS NULL OR ontvangen_op_gmail = '')");
+                $upd2->execute([
+                    ':d' => $ontvangenOpGmail,
+                    ':id' => $id,
+                ]);
+            }
         }
     };
     $aliassen = [];
