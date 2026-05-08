@@ -658,7 +658,7 @@ function normaliseerTekst($text)
     return trim((string) $text);
 }
 
-function haalKennisUitContactPaginaVoorEmailAi()
+function haalKennisVoorEmailAi()
 {
     $docRoot = isset($_SERVER['DOCUMENT_ROOT']) ? (string) $_SERVER['DOCUMENT_ROOT'] : '';
     if ($docRoot === '') {
@@ -668,11 +668,29 @@ function haalKennisUitContactPaginaVoorEmailAi()
     $pathMijnEmail = $docRoot . '/include/mijnemail_universeel.inc';
     $pathContact = $docRoot . '/include/contact.inc';
 
-    if (!is_file($pathMijnEmail) && !is_file($pathContact)) {
+    $faqPaths = [
+        $docRoot . '/include/ChatGPT/aankoop.php',
+        $docRoot . '/include/ChatGPT/zending.php',
+        $docRoot . '/include/ChatGPT/service.php',
+        $docRoot . '/include/ChatGPT/inkoop.php',
+        $docRoot . '/include/ChatGPT/loyaliteit.php',
+    ];
+
+    $heeftBestanden = is_file($pathMijnEmail) || is_file($pathContact);
+    if (!$heeftBestanden) {
+        foreach ($faqPaths as $p) {
+            if (is_file($p)) {
+                $heeftBestanden = true;
+                break;
+            }
+        }
+    }
+    if (!$heeftBestanden) {
         return '';
     }
 
     $bodymain3 = '';
+    $FAQ = [];
 
     set_error_handler(function () {
         return true;
@@ -682,6 +700,11 @@ function haalKennisUitContactPaginaVoorEmailAi()
     if (is_file($pathMijnEmail)) {
         include_once $pathMijnEmail;
     }
+    foreach ($faqPaths as $p) {
+        if (is_file($p)) {
+            include $p;
+        }
+    }
     if (is_file($pathContact)) {
         include_once $pathContact;
     }
@@ -689,43 +712,85 @@ function haalKennisUitContactPaginaVoorEmailAi()
 
     restore_error_handler();
 
-    $html = '';
+    $stripHtmlNaarTekst = function ($html) {
+        $t = str_replace(["\r\n", "\r"], "\n", (string) $html);
+        $t = preg_replace('/<\s*head\b[^>]*>[\s\S]*?<\s*\/\s*head\s*>/i', '', (string) $t);
+        $t = preg_replace('/<\s*style\b[^>]*>[\s\S]*?<\s*\/\s*style\s*>/i', '', (string) $t);
+        $t = preg_replace('/<\s*script\b[^>]*>[\s\S]*?<\s*\/\s*script\s*>/i', '', (string) $t);
+        $t = preg_replace('/<\s*br\s*\/?\s*>/i', "\n", (string) $t);
+        $t = preg_replace('/<\/\s*p\s*>/i', "\n\n", (string) $t);
+        $t = preg_replace('/<\/\s*tr\s*>/i', "\n", (string) $t);
+        $t = preg_replace('/<\/\s*div\s*>/i', "\n", (string) $t);
+        $t = preg_replace('/<\s*li[^>]*>/i', "\n- ", (string) $t);
+        $t = preg_replace('/<\s*\/li\s*>/i', '', (string) $t);
+        $t = preg_replace('/<\s*\/?ul[^>]*>/i', "\n", (string) $t);
+        $t = preg_replace('/<\s*\/?ol[^>]*>/i', "\n", (string) $t);
+        $t = strip_tags((string) $t);
+        $t = html_entity_decode((string) $t, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+        $t = preg_replace("/[ \t]+\n/", "\n", (string) $t);
+        $t = preg_replace("/\n{3,}/", "\n\n", (string) $t);
+        return trim((string) $t);
+    };
+
+    $maxLen = 8000;
+
+    $contactHtml = '';
     if (is_string($bodymain3) && trim($bodymain3) !== '') {
-        $html .= $bodymain3;
+        $contactHtml .= $bodymain3;
     }
     if (is_string($echoed) && trim($echoed) !== '') {
-        $html .= "\n" . $echoed;
+        $contactHtml .= "\n" . $echoed;
+    }
+    $contactText = $stripHtmlNaarTekst($contactHtml);
+    if ($contactText !== '' && strlen($contactText) > 2000) {
+        $contactText = rtrim(substr($contactText, 0, 2000));
     }
 
-    $html = trim((string) $html);
-    if ($html === '') {
+    $faqText = '';
+    $FAQ = (isset($FAQ) && is_array($FAQ)) ? $FAQ : [];
+    if (!empty($FAQ)) {
+        $doelLen = max(1000, $maxLen - strlen($contactText) - 30);
+        $faqText = "FAQ:\n";
+        foreach ($FAQ as $valueArray) {
+            foreach ((array) $valueArray as $item) {
+                if (!isset($item['text'])) {
+                    continue;
+                }
+                $clean = $stripHtmlNaarTekst($item['text']);
+                if ($clean === '') {
+                    continue;
+                }
+                $toAdd = ($faqText === "FAQ:\n") ? $clean : ("\n\n" . $clean);
+                if (strlen($faqText) + strlen($toAdd) > $doelLen) {
+                    $remaining = $doelLen - strlen($faqText);
+                    if ($remaining > 50) {
+                        $faqText .= substr($toAdd, 0, $remaining);
+                        $faqText = rtrim($faqText);
+                    }
+                    break 2;
+                }
+                $faqText .= $toAdd;
+            }
+        }
+        $faqText = trim($faqText) !== 'FAQ:' ? trim($faqText) : '';
+    }
+
+    $parts = [];
+    if ($faqText !== '') {
+        $parts[] = $faqText;
+    }
+    if ($contactText !== '') {
+        $parts[] = $contactText;
+    }
+
+    $result = trim(implode("\n\n", $parts));
+    if ($result === '') {
         return '';
     }
-
-    $t = str_replace(["\r\n", "\r"], "\n", $html);
-    $t = preg_replace('/<\s*head\b[^>]*>[\s\S]*?<\s*\/\s*head\s*>/i', '', (string) $t);
-    $t = preg_replace('/<\s*style\b[^>]*>[\s\S]*?<\s*\/\s*style\s*>/i', '', (string) $t);
-    $t = preg_replace('/<\s*script\b[^>]*>[\s\S]*?<\s*\/\s*script\s*>/i', '', (string) $t);
-    $t = preg_replace('/<\s*br\s*\/?\s*>/i', "\n", (string) $t);
-    $t = preg_replace('/<\/\s*p\s*>/i', "\n\n", (string) $t);
-    $t = preg_replace('/<\/\s*tr\s*>/i', "\n", (string) $t);
-    $t = preg_replace('/<\/\s*div\s*>/i', "\n", (string) $t);
-    $t = strip_tags((string) $t);
-    $t = html_entity_decode((string) $t, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
-    $t = preg_replace("/[ \t]+\n/", "\n", (string) $t);
-    $t = preg_replace("/\n{3,}/", "\n\n", (string) $t);
-    $t = trim((string) $t);
-
-    if ($t === '') {
-        return '';
+    if (strlen($result) > $maxLen) {
+        $result = rtrim(substr($result, 0, $maxLen));
     }
-
-    if (strlen($t) > 8000) {
-        $t = substr($t, 0, 8000);
-        $t = rtrim($t);
-    }
-
-    return $t;
+    return $result;
 }
 
 function stripQuotedEnHandtekeningTekst($text)
@@ -1103,69 +1168,18 @@ function roepOpenAiAanVoorEmailConcept($onderwerp, $klantTekst, $extraInstructie
     if (is_string($extraInstructies) && trim($extraInstructies) !== '') {
         $system .= "\n\nExtra regels/instructies:\n" . trim($extraInstructies);
     }
-    $kennis = haalKennisUitContactPaginaVoorEmailAi();
+    $kennis = haalKennisVoorEmailAi();
     if (is_string($kennis) && trim($kennis) !== '') {
-        $system .= "\n\nRelevante informatie (contact/werktijden/bedrijfsgegevens):\n" . trim($kennis);
+        $system .= "\n\nRelevante informatie (FAQ/contact/werktijden/bedrijfsgegevens):\n" . trim($kennis);
     }
     $user = "Onderwerp: " . (string) $onderwerp;
     if (is_string($threadContext) && trim($threadContext) !== '') {
         $user .= "\n\nEerdere berichten (ingekort):\n" . trim($threadContext);
     }
     $user .= "\n\nLaatste klantmail:\n" . (string) $klantTekst;
-    /*
-    $data = [
-        'model' => $model,
-        'messages' => [
-            ['role' => 'system', 'content' => $system],
-            ['role' => 'user', 'content' => $user],
-        ],
-        'temperature' => 0.2,
-        'max_completion_tokens' => 900,
-    ];
- 
-$raw = CHATGPT($user, $system, $temperature = 0.2, $model, '', 1);
 
-    
-    $ch = curl_init('https://api.openai.com/v1/chat/completions');
-    curl_setopt($ch, CURLOPT_POST, true);
-    curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($data));
-    curl_setopt($ch, CURLOPT_HTTPHEADER, [
-        'Content-Type: application/json',
-        'Authorization: Bearer ' . $apiKey,
-    ]);
-    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    curl_setopt($ch, CURLOPT_TIMEOUT, 45);
-
-    $raw = curl_exec($ch);
-    $err = curl_error($ch);
-    $status = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    curl_close($ch);
-
-    if ($raw === false) {
-        return ['ok' => false, 'error' => 'OpenAI curl fout: ' . (string) $err];
-    }
-
-    $decoded = json_decode($raw, true);
-
-$decoded = CHATGPT($user, $system, $temperature = 0.2, $model, '', 1);   
-    
-    if (!is_array($decoded)) {
-        return ['ok' => false, 'error' => 'OpenAI gaf geen geldige JSON terug.'];
-    }
-
-    if ($status < 200 || $status >= 300) {
-        $msg = isset($decoded['error']['message']) ? (string) $decoded['error']['message'] : 'Onbekende OpenAI fout';
-        return ['ok' => false, 'error' => $msg];
-
-    $content = $decoded['choices'][0]['message']['content'] ?? '';
-    $content = is_string($content) ? trim($content) : '';
-    if ($content === '') {
-        return ['ok' => false, 'error' => 'OpenAI gaf geen tekst terug.'];
-    }
-    
-    */
     $mode = function_exists('getChatModelMode') ? getChatModelMode() : 2;
-    $content = CHATGPT($user, $system, 0.2, $mode, '', 1);
+    $content = CHATGPT($user, $system, 0.2, $mode, [], 1);
     return ['ok' => true, 'content' => $content];
 }
 
@@ -1601,8 +1615,8 @@ function runEmailSyncOnce($conn, $maxResults = 5)
     if ($maxResults <= 0) {
         $maxResults = 1;
     }
-    if ($maxResults > 10) {
-        $maxResults = 10;
+    if ($maxResults > 500) {
+        $maxResults = 500;
     }
 
     $token = haalGmailAccessTokenOp();
@@ -1715,138 +1729,148 @@ function runEmailSyncOnce($conn, $maxResults = 5)
     }
 
     $aantalNieuwe = 0;
-    $lijst = gmailApiRequest('GET', 'users/me/messages', $accessToken, null, [
-        'labelIds' => 'INBOX',
-        // We halen alle ongelezen inbox mails op.
-        // We filteren niet op label in de zoekopdracht, omdat Gmail per conversatie zoekt.
-        // Anders missen we nieuwe reacties in een conversatie die eerder al het AI label kreeg.
-        'q' => 'is:unread',
-        'maxResults' => $maxResults,
-    ]);
+    $pageToken = '';
 
-    if (empty($lijst['ok'])) {
-        $err = isset($lijst['error']) ? (string) $lijst['error'] : 'Ongelezen mails ophalen is mislukt.';
-        return ['ok' => false, 'new' => 0, 'error' => $err];
-    }
+    while (true) {
+        $params = [
+            'labelIds' => 'INBOX',
+            'q' => 'is:unread',
+            'maxResults' => $maxResults,
+        ];
+        if ($pageToken !== '') {
+            $params['pageToken'] = $pageToken;
+        }
+        $lijst = gmailApiRequest('GET', 'users/me/messages', $accessToken, null, $params);
 
-    $messages = $lijst['data']['messages'] ?? [];
-    if (!is_array($messages) || empty($messages)) {
-        return ['ok' => true, 'new' => 0, 'error' => ''];
-    }
-
-    foreach ($messages as $m) {
-        if (!is_array($m) || empty($m['id'])) {
-            continue;
+        if (empty($lijst['ok'])) {
+            $err = isset($lijst['error']) ? (string) $lijst['error'] : 'Ongelezen mails ophalen is mislukt.';
+            return ['ok' => false, 'new' => 0, 'error' => $err];
         }
 
-        $msgId = (string) $m['id'];
-        $detail = gmailApiRequest('GET', 'users/me/messages/' . rawurlencode($msgId), $accessToken, null, [
-            'format' => 'full',
-        ]);
-        if (empty($detail['ok'])) {
-            continue;
+        $messages = $lijst['data']['messages'] ?? [];
+        if (!is_array($messages) || empty($messages)) {
+            break;
         }
 
-        $data = $detail['data'] ?? [];
-        $labelIds = (isset($data['labelIds']) && is_array($data['labelIds'])) ? $data['labelIds'] : [];
-        // Als deze mail al eerder door ons is verwerkt, slaan we hem over.
-        if ($aiLabelId !== '' && in_array($aiLabelId, $labelIds, true)) {
-            continue;
-        }
-        $threadId = isset($data['threadId']) ? (string) $data['threadId'] : '';
-        $payload = $data['payload'] ?? [];
-        $headers = is_array($payload) && isset($payload['headers']) ? $payload['headers'] : [];
-        $from = haalHeaderOp($headers, 'From') ?? '';
-        $subject = haalHeaderOp($headers, 'Subject') ?? '';
-        $klantEmail = parseerEmailAdresUitFromHeader($from);
-        $ontvangerEmail = haalOntvangerEmailUitMailHeaders($headers);
-        $ontvangerEmail = strtolower(trim((string) $ontvangerEmail));
-        if ($ontvangerEmail !== '' && !isset($aliasEmails[$ontvangerEmail])) {
-            $ontvangerEmail = '';
-        }
-        $afzenderAlias = bepaalAfzenderAliasVoorOntvanger($conn, $ontvangerEmail);
-
-        if ($threadId === '' || $klantEmail === '') {
-            continue;
-        }
-
-        $rulesResult = verwerkEmailRulesVoorMail($actieveRegels, $from, $subject);
-        if (!empty($rulesResult['ignore'])) {
-            if ($aiLabelId !== '') {
-                gmailApiRequest('POST', 'users/me/messages/' . rawurlencode($msgId) . '/modify', $accessToken, [
-                    'addLabelIds' => [$aiLabelId],
-                ]);
+        foreach ($messages as $m) {
+            if (!is_array($m) || empty($m['id'])) {
+                continue;
             }
-            continue;
-        }
 
-        if (bestaatEmailConceptVoorThread($conn, $threadId)) {
-            // Er is al een concept voor deze conversatie.
-            // We updaten de datum zodat hij weer bovenaan komt in de lijst.
-            try {
-                $upd = $conn->prepare("
+            $msgId = (string) $m['id'];
+            $detail = gmailApiRequest('GET', 'users/me/messages/' . rawurlencode($msgId), $accessToken, null, [
+                'format' => 'full',
+            ]);
+            if (empty($detail['ok'])) {
+                continue;
+            }
+
+            $data = $detail['data'] ?? [];
+            $labelIds = (isset($data['labelIds']) && is_array($data['labelIds'])) ? $data['labelIds'] : [];
+            // Als deze mail al eerder door ons is verwerkt, slaan we hem over.
+            if ($aiLabelId !== '' && in_array($aiLabelId, $labelIds, true)) {
+                continue;
+            }
+            $threadId = isset($data['threadId']) ? (string) $data['threadId'] : '';
+            $payload = $data['payload'] ?? [];
+            $headers = is_array($payload) && isset($payload['headers']) ? $payload['headers'] : [];
+            $from = haalHeaderOp($headers, 'From') ?? '';
+            $subject = haalHeaderOp($headers, 'Subject') ?? '';
+            $klantEmail = parseerEmailAdresUitFromHeader($from);
+            $ontvangerEmail = haalOntvangerEmailUitMailHeaders($headers);
+            $ontvangerEmail = strtolower(trim((string) $ontvangerEmail));
+            if ($ontvangerEmail !== '' && !isset($aliasEmails[$ontvangerEmail])) {
+                $ontvangerEmail = '';
+            }
+            $afzenderAlias = bepaalAfzenderAliasVoorOntvanger($conn, $ontvangerEmail);
+
+            if ($threadId === '' || $klantEmail === '') {
+                continue;
+            }
+
+            $rulesResult = verwerkEmailRulesVoorMail($actieveRegels, $from, $subject);
+            if (!empty($rulesResult['ignore'])) {
+                if ($aiLabelId !== '') {
+                    gmailApiRequest('POST', 'users/me/messages/' . rawurlencode($msgId) . '/modify', $accessToken, [
+                        'addLabelIds' => [$aiLabelId],
+                    ]);
+                }
+                continue;
+            }
+
+            if (bestaatEmailConceptVoorThread($conn, $threadId)) {
+                // Er is al een concept voor deze conversatie.
+                // We updaten de datum zodat hij weer bovenaan komt in de lijst.
+                try {
+                    $upd = $conn->prepare("
                     UPDATE email_concepten
                     SET onderwerp = CASE WHEN (onderwerp IS NULL OR onderwerp = '') THEN :o ELSE onderwerp END
                     WHERE gmail_thread_id = :t
                     LIMIT 1
                 ");
-                $upd->execute([
-                    ':o' => (string) $subject,
-                    ':t' => (string) $threadId,
-                ]);
-            } catch (Throwable) {
+                    $upd->execute([
+                        ':o' => (string) $subject,
+                        ':t' => (string) $threadId,
+                    ]);
+                } catch (Throwable) {
+                }
+                if ($aiLabelId !== '') {
+                    gmailApiRequest('POST', 'users/me/messages/' . rawurlencode($msgId) . '/modify', $accessToken, [
+                        'addLabelIds' => [$aiLabelId],
+                    ]);
+                }
+                continue;
             }
+
+            $text = zoekTekstPlainInPayload($payload);
+            if (!is_string($text) || $text === '') {
+                $text = zoekTekstHtmlInPayload($payload);
+            }
+            if (!is_string($text) || $text === '') {
+                $text = isset($data['snippet']) ? (string) $data['snippet'] : '';
+            }
+            $text = normaliseerTekst($text);
+            $text = stripQuotedEnHandtekeningTekst($text);
+            if ($text === '') {
+                continue;
+            }
+
+            $extraInstructies = isset($rulesResult['extra_instructies']) ? (string) $rulesResult['extra_instructies'] : '';
+            $threadContext = '';
+            try {
+                $t = gmailApiRequest('GET', 'users/me/threads/' . rawurlencode($threadId), $accessToken, null, ['format' => 'full']);
+                if (!empty($t['ok']) && isset($t['data']['messages']) && is_array($t['data']['messages'])) {
+                    $threadContext = bouwThreadContextVoorAi($t['data']['messages'], $klantEmail, 5);
+                }
+            } catch (Throwable) {
+                $threadContext = '';
+            }
+
+            $ai = roepOpenAiAanVoorEmailConcept($subject, $text, $extraInstructies, $threadContext);
+            if (empty($ai['ok'])) {
+                $err = isset($ai['error']) ? (string) $ai['error'] : 'OpenAI fout.';
+                schrijfEmailWorkerLog('OpenAI fout: ' . $err);
+                continue;
+            }
+
+            $conceptTekst = (string) $ai['content'];
+            if ($conceptTekst === '') {
+                continue;
+            }
+
+            voegEmailConceptToe($conn, $threadId, $klantEmail, $conceptTekst, $ontvangerEmail, $afzenderAlias, $subject);
             if ($aiLabelId !== '') {
                 gmailApiRequest('POST', 'users/me/messages/' . rawurlencode($msgId) . '/modify', $accessToken, [
                     'addLabelIds' => [$aiLabelId],
                 ]);
             }
-            continue;
+            $aantalNieuwe++;
         }
 
-        $text = zoekTekstPlainInPayload($payload);
-        if (!is_string($text) || $text === '') {
-            $text = zoekTekstHtmlInPayload($payload);
+        $pageToken = isset($lijst['data']['nextPageToken']) ? trim((string) $lijst['data']['nextPageToken']) : '';
+        if ($pageToken === '') {
+            break;
         }
-        if (!is_string($text) || $text === '') {
-            $text = isset($data['snippet']) ? (string) $data['snippet'] : '';
-        }
-        $text = normaliseerTekst($text);
-        $text = stripQuotedEnHandtekeningTekst($text);
-        if ($text === '') {
-            continue;
-        }
-
-        $extraInstructies = isset($rulesResult['extra_instructies']) ? (string) $rulesResult['extra_instructies'] : '';
-        $threadContext = '';
-        try {
-            $t = gmailApiRequest('GET', 'users/me/threads/' . rawurlencode($threadId), $accessToken, null, ['format' => 'full']);
-            if (!empty($t['ok']) && isset($t['data']['messages']) && is_array($t['data']['messages'])) {
-                $threadContext = bouwThreadContextVoorAi($t['data']['messages'], $klantEmail, 5);
-            }
-        } catch (Throwable) {
-            $threadContext = '';
-        }
-
-        $ai = roepOpenAiAanVoorEmailConcept($subject, $text, $extraInstructies, $threadContext);
-        if (empty($ai['ok'])) {
-            $err = isset($ai['error']) ? (string) $ai['error'] : 'OpenAI fout.';
-            schrijfEmailWorkerLog('OpenAI fout: ' . $err);
-            continue;
-        }
-
-        $conceptTekst = (string) $ai['content'];
-        if ($conceptTekst === '') {
-            continue;
-        }
-
-        voegEmailConceptToe($conn, $threadId, $klantEmail, $conceptTekst, $ontvangerEmail, $afzenderAlias, $subject);
-        if ($aiLabelId !== '') {
-            gmailApiRequest('POST', 'users/me/messages/' . rawurlencode($msgId) . '/modify', $accessToken, [
-                'addLabelIds' => [$aiLabelId],
-            ]);
-        }
-        $aantalNieuwe++;
     }
 
     return ['ok' => true, 'new' => $aantalNieuwe, 'error' => ''];
@@ -1950,7 +1974,7 @@ if (isset($_GET['email_worker']) && (string) $_GET['email_worker'] === '1') {
 
     $result = null;
     try {
-        $result = runEmailSyncOnce($conn, 5);
+        $result = runEmailSyncOnce($conn, 500);
     } catch (Throwable $e) {
         schrijfEmailWorkerLog('Worker fout: ' . $e->getMessage());
         $result = ['ok' => false, 'new' => 0, 'error' => 'Worker fout.'];
