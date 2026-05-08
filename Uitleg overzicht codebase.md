@@ -114,7 +114,7 @@ Code-links in dit document zijn relatief (werken in GitHub én als je de repo lo
 
 ### OpenAI call voor e-mailconcepten
 - Functie:
-  - [roepOpenAiAanVoorEmailConcept](EmailDashboard.php#L1336) in [EmailDashboard.php](EmailDashboard.php)
+  - [roepOpenAiAanVoorEmailConcept](EmailDashboard.php#L1343) in [EmailDashboard.php](EmailDashboard.php)
 - Model:
   - Gebruikt ook `CHAT_MODEL_MODE` uit `.env` (zelfde mapping als chat).
 - Let op (verschil met chat):
@@ -122,8 +122,8 @@ Code-links in dit document zijn relatief (werken in GitHub én als je de repo lo
   - Het e-mailconcept gebruikt de centrale helper [ChatFunction.php](include/ChatFunction.php) (`CHATGPT(...)`) en maakt één antwoord per mail.
   - US23: voor ordervragen doet EmailDashboard eerst zelf een DB lookup (bestelnummer + email) en stuurt die feiten mee naar de AI:
     - Helpers: [bestelling_lookup.php](include/bestelling_lookup.php)
-    - Extractie uit mail: [extracteerBestelEnEmailUitTekst](EmailDashboard.php#L1117)
-    - AI call: [roepOpenAiAanVoorEmailConcept](EmailDashboard.php#L1336)
+    - Extractie uit mail: [extracteerBestelEnEmailUitTekst](EmailDashboard.php#L1124)
+    - AI call: [roepOpenAiAanVoorEmailConcept](EmailDashboard.php#L1343)
 
 ### System0 in e-mail (alleen als je het echt gebruikt)
 - System0 is een extra AI-stap die een label teruggeeft zoals “Zending” of “Service”.
