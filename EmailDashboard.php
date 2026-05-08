@@ -1367,7 +1367,7 @@ function roepOpenAiAanVoorEmailConcept($onderwerp, $klantTekst, $extraInstructie
         $system .= "\n\nRelevante informatie (FAQ/contact/werktijden/bedrijfsgegevens):\n" . trim($kennis);
     }
 
-    // US23: als de klant zijn bestelnummer + e-mailadres al geeft, halen we orderdata direct uit de DB.
+    // als de klant zijn bestelnummer + e-mailadres al geeft, halen we orderdata direct uit de DB.
     // Zo kan de AI meteen een feitelijk concept maken (zonder dat de medewerker zelf moet zoeken).
     $orderInfo = extracteerBestelEnEmailUitTekst($klantTekst);
     $bestellingId = isset($orderInfo['bestelling_id']) ? (int) $orderInfo['bestelling_id'] : 0;
@@ -3066,9 +3066,21 @@ if (!$concept) {
 } else {
     // Als je een concept opent, laden we de hele conversatie om de originele mail te tonen.
     $threadHtml = '';
+    $threadErrorHtml = '';
     $origineelOnderwerp = isset($concept['onderwerp']) ? trim((string) $concept['onderwerp']) : '';
     $token = haalGmailAccessTokenOp();
-    if (!empty($token['ok'])) {
+    if (empty($token['ok'])) {
+        $errTekst = isset($token['error']) ? trim((string) $token['error']) : 'Gmail token ontbreekt.';
+        $authUrl = isset($token['reauth_url']) ? trim((string) $token['reauth_url']) : '';
+        if ($authUrl === '') {
+            $authUrl = (string) (maakGoogleAuthUrl() ?? '');
+        }
+        if ($authUrl !== '') {
+            $threadErrorHtml = '<div style="display:flex; flex-wrap:wrap; gap:10px; align-items:center; justify-content:space-between;"><div style="color:#6b7280;">' . e($errTekst) . '</div>' . maakGoogleKoppelKnopHtml($authUrl) . '</div>';
+        } else {
+            $threadErrorHtml = '<div style="color:#6b7280;">' . e($errTekst) . '</div>';
+        }
+    } else {
         $accessToken = (string) $token['access_token'];
         $threadId = (string) $concept['gmail_thread_id'];
         $thread = gmailApiRequest('GET', 'users/me/threads/' . rawurlencode($threadId), $accessToken, null, ['format' => 'full']);
@@ -3165,6 +3177,14 @@ if (!$concept) {
             }
 
             $threadHtml = implode('', $blocks);
+        } else {
+            $errTekst = isset($thread['error']) ? trim((string) $thread['error']) : 'Thread ophalen is niet gelukt.';
+            $authUrl = (string) (maakGoogleAuthUrl() ?? '');
+            if ($authUrl !== '') {
+                $threadErrorHtml = '<div style="display:flex; flex-wrap:wrap; gap:10px; align-items:center; justify-content:space-between;"><div style="color:#6b7280;">' . e($errTekst) . '</div>' . maakGoogleKoppelKnopHtml($authUrl) . '</div>';
+            } else {
+                $threadErrorHtml = '<div style="color:#6b7280;">' . e($errTekst) . '</div>';
+            }
         }
     }
 
@@ -3176,6 +3196,8 @@ if (!$concept) {
     $detailHtml .= '<div style="max-height: var(--thread-max-h); overflow-y:auto; padding-right:10px; -webkit-overflow-scrolling:touch;">';
     if (is_string($threadHtml) && $threadHtml !== '') {
         $detailHtml .= $threadHtml;
+    } elseif (is_string($threadErrorHtml) && $threadErrorHtml !== '') {
+        $detailHtml .= $threadErrorHtml;
     } else {
         $detailHtml .= '<div style="color:#6b7280;">Niet beschikbaar. OAuth/token of thread ophalen is nog niet gelukt.</div>';
     }
