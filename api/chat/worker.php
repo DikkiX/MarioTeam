@@ -168,7 +168,7 @@ function bepaalGeforceerdeToolChoice($berichtTekst)
     // Als er én een bestelnummer én een e-mail in de tekst staat, gaan we meteen zoeken.
     $heeftBestelWoord = preg_match('/bestelling|bestelnummer|order|status|inhoud|artikelen|orderregels|wat heb ik besteld|wat zit er/i', $berichtTekst) === 1;
     $heeftEmail = preg_match('/[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}/i', $berichtTekst) === 1;
-    $heeftBestelnummer = preg_match('/\b\d{4,}\b/', $berichtTekst) === 1;
+    $heeftBestelnummer = preg_match('/\b\d+\b/', $berichtTekst) === 1;
 
     if ($heeftBestelWoord && $heeftEmail && $heeftBestelnummer) {
         return [

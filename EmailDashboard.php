@@ -1125,9 +1125,9 @@ function extracteerBestelEnEmailUitTekst($text)
     }
 
     $bestellingId = 0;
-    if (preg_match('/\b(bestel(?:nummer|nr)?|bestelling|order)\b[^\d]{0,20}(\d{4,})/i', $t, $m) === 1) {
+    if (preg_match('/\b(bestel(?:nummer|nr)?|bestelling|order)\b[^\d]{0,20}(\d+)/i', $t, $m) === 1) {
         $bestellingId = (int) ($m[2] ?? 0);
-    } elseif (preg_match('/\b\d{4,}\b/', $t, $m) === 1) {
+    } elseif (preg_match('/\b(bestel(?:nummer|nr)?|bestelling|order)\b/i', $t) === 1 && preg_match('/\b\d+\b/', $t, $m) === 1) {
         $bestellingId = (int) ($m[0] ?? 0);
     }
 
