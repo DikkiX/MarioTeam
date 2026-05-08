@@ -2,6 +2,7 @@
 include_once $_SERVER['DOCUMENT_ROOT'] . '/include/db.inc';
 include_once $_SERVER['DOCUMENT_ROOT'] . '/include/env.php';
 include_once $_SERVER['DOCUMENT_ROOT'] . '/include/ChatFunction.php';
+include_once $_SERVER['DOCUMENT_ROOT'] . '/include/bestelling_lookup.php';
 $conn = $conn ?? null;
 if (!($conn instanceof PDO)) {
     http_response_code(500);
@@ -1112,6 +1113,80 @@ function formatteerGmailOntvangstTijdVoorDashboard($gmailMessageData, $headers)
     return '';
 }
 
+function extracteerBestelEnEmailUitTekst($text)
+{
+    $t = (string) $text;
+    $email = '';
+    if (preg_match('/[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}/i', $t, $m) === 1) {
+        $candidate = strtolower(trim((string) ($m[0] ?? '')));
+        if ($candidate !== '' && filter_var($candidate, FILTER_VALIDATE_EMAIL)) {
+            $email = $candidate;
+        }
+    }
+
+    $bestellingId = 0;
+    if (preg_match('/\b(bestel(?:nummer|nr)?|bestelling|order)\b[^\d]{0,20}(\d{4,})/i', $t, $m) === 1) {
+        $bestellingId = (int) ($m[2] ?? 0);
+    } elseif (preg_match('/\b\d{4,}\b/', $t, $m) === 1) {
+        $bestellingId = (int) ($m[0] ?? 0);
+    }
+
+    return [
+        'bestelling_id' => $bestellingId,
+        'email' => $email,
+    ];
+}
+
+function bouwOrderContextTekstVoorAi($orderResult)
+{
+    if (!is_array($orderResult) || empty($orderResult['gevonden'])) {
+        return '';
+    }
+    $r = isset($orderResult['resultaat']) && is_array($orderResult['resultaat']) ? $orderResult['resultaat'] : [];
+    $artikelen = isset($orderResult['artikelen']) && is_array($orderResult['artikelen']) ? $orderResult['artikelen'] : [];
+
+    $lines = [];
+    $id = isset($r['id']) ? (string) $r['id'] : '';
+    if ($id !== '') {
+        $lines[] = 'Bestelnummer: ' . $id;
+    }
+    $vs = isset($r['verzend_status']) ? (string) $r['verzend_status'] : '';
+    if ($vs !== '') {
+        $lines[] = 'Verzendstatus: ' . $vs;
+    }
+    $tc = isset($r['track_code']) ? (string) $r['track_code'] : '';
+    if ($tc !== '') {
+        $lines[] = 'Track&Trace code: ' . $tc;
+    }
+    $totaal = isset($r['totaal']) ? (string) $r['totaal'] : '';
+    if ($totaal !== '') {
+        $lines[] = 'Totaal: ' . $totaal;
+    }
+    $verzend = isset($r['verzendkosten']) ? (string) $r['verzendkosten'] : '';
+    if ($verzend !== '') {
+        $lines[] = 'Verzendkosten: ' . $verzend;
+    }
+    if (!empty($artikelen)) {
+        $lines[] = 'Artikelen:';
+        foreach ($artikelen as $a) {
+            if (!is_array($a)) {
+                continue;
+            }
+            $naam = isset($a['productnaam']) ? trim((string) $a['productnaam']) : '';
+            $aantal = isset($a['aantal']) ? (int) $a['aantal'] : 0;
+            if ($naam === '') {
+                continue;
+            }
+            if ($aantal <= 0) {
+                $aantal = 1;
+            }
+            $lines[] = '- ' . $aantal . 'x ' . $naam;
+        }
+    }
+
+    return implode("\n", $lines);
+}
+
 function parseerEmailAdressenUitHeaderTekst($headerTekst)
 {
     // Haal 1 of meerdere e-mailadressen uit een header-string (To/Cc/Delivered-To/etc).
@@ -1252,6 +1327,7 @@ function voegEmailConceptToe($conn, $threadId, $klantEmail, $conceptTekst, $ontv
 function roepOpenAiAanVoorEmailConcept($onderwerp, $klantTekst, $extraInstructies = '', $threadContext = '')
 {
     // Dit maakt een concept-antwoord op basis van de klantmail.
+    global $conn;
     $apiKey = getProjectEnvValue('OPENAI_API_KEY');
     if ($apiKey === null || $apiKey === '') {
         return ['ok' => false, 'error' => 'OPENAI_API_KEY ontbreekt in .env.'];
@@ -1259,10 +1335,9 @@ function roepOpenAiAanVoorEmailConcept($onderwerp, $klantTekst, $extraInstructie
 
     $model = function_exists('getChatModelName') ? getChatModelName() : 'gpt-4.1-mini';
 
-    $system = 'Je schrijft een concept-antwoord voor de klantenservice van de webshops van MarioTeam. Schrijf in het Nederlands. Als informatie ontbreekt, stel eerst korte, duidelijke vragen. Geef geen exacte voorraadaantallen. Als de klant om ordergegevens vraagt, vraag eerst om bestelnummer + e-mailadres. Als de klant naar actuele prijs/voorraad vraagt, zeg dat je dat niet live kunt checken in e-mail en verwijs naar de website of de chat. Geef alleen het antwoord (geen uitleg over je stappen).';
+    $system = 'Je schrijft een concept-antwoord voor de klantenservice van de webshops van MarioTeam. Schrijf in het Nederlands. Als informatie ontbreekt, stel eerst korte, duidelijke vragen. Geef geen exacte voorraadaantallen. Als de klant om ordergegevens vraagt: vraag alleen om ontbrekende gegevens (bestelnummer en/of e-mailadres). Als ze al in de tekst staan, vraag niet om bevestiging maar gebruik ze. Als er orderdata uit de database is meegegeven, baseer je antwoord daarop en verzin niets. Als de klant naar actuele prijs/voorraad vraagt, zeg dat je dat niet live kunt checken in e-mail en verwijs naar de website of de chat. Geef alleen het antwoord (geen uitleg over je stappen).';
     $tone = '';
     try {
-        global $conn;
         if (isset($conn) && $conn) {
             $tone = haalDashboardSetting($conn, 'tone_of_voice');
         }
@@ -1280,11 +1355,39 @@ function roepOpenAiAanVoorEmailConcept($onderwerp, $klantTekst, $extraInstructie
     if (is_string($kennis) && trim($kennis) !== '') {
         $system .= "\n\nRelevante informatie (FAQ/contact/werktijden/bedrijfsgegevens):\n" . trim($kennis);
     }
+
+    $orderInfo = extracteerBestelEnEmailUitTekst($klantTekst);
+    $bestellingId = isset($orderInfo['bestelling_id']) ? (int) $orderInfo['bestelling_id'] : 0;
+    $emailInTekst = isset($orderInfo['email']) ? (string) $orderInfo['email'] : '';
+    if ($bestellingId > 0 && $emailInTekst !== '' && isset($conn) && ($conn instanceof PDO)) {
+        try {
+            $orderResult = zoekBestellingRuw($conn, $bestellingId, $emailInTekst);
+            if (!empty($orderResult['gevonden'])) {
+                $orderText = bouwOrderContextTekstVoorAi($orderResult);
+                if ($orderText !== '') {
+                    $system .= "\n\nOrdergegevens uit database:\n" . $orderText;
+                }
+            } else {
+                $system .= "\n\nOrder lookup:\nNiet gevonden voor de opgegeven combinatie. Vraag de klant om bestelnummer en e-mailadres te controleren.";
+            }
+        } catch (Throwable) {
+            $system .= "\n\nOrder lookup:\nNiet beschikbaar. Schrijf een standaard antwoord zonder orderdetails.";
+        }
+    }
     $user = "Onderwerp: " . (string) $onderwerp;
     if (is_string($threadContext) && trim($threadContext) !== '') {
         $user .= "\n\nEerdere berichten (ingekort):\n" . trim($threadContext);
     }
     $user .= "\n\nLaatste klantmail:\n" . (string) $klantTekst;
+    if ($bestellingId > 0 || $emailInTekst !== '') {
+        $user .= "\n\nGegeven gegevens:";
+        if ($bestellingId > 0) {
+            $user .= "\n- Bestelnummer: " . (string) $bestellingId;
+        }
+        if ($emailInTekst !== '') {
+            $user .= "\n- E-mailadres: " . (string) $emailInTekst;
+        }
+    }
 
     $mode = function_exists('getChatModelMode') ? getChatModelMode() : 2;
     $content = CHATGPT($user, $system, 0.2, $mode, [], 1);
