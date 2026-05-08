@@ -1089,6 +1089,29 @@ function parseerEmailAdresUitFromHeader($fromHeader)
     return '';
 }
 
+function formatteerGmailOntvangstTijdVoorDashboard($gmailMessageData, $headers)
+{
+    // Voor de lijst willen we de ontvangstmoment-tijd van Gmail tonen (niet het moment dat wij het concept opslaan).
+    // We proberen eerst de "Date" header, en vallen terug op Gmail internalDate.
+    $dateHeader = is_array($headers) ? (haalHeaderOp($headers, 'Date') ?? '') : '';
+    $dateHeader = is_string($dateHeader) ? trim($dateHeader) : '';
+    if ($dateHeader !== '') {
+        $ts = strtotime($dateHeader);
+        if (is_int($ts) && $ts > 0) {
+            return date('Y-m-d H:i', $ts);
+        }
+    }
+
+    if (is_array($gmailMessageData) && isset($gmailMessageData['internalDate'])) {
+        $ms = (int) $gmailMessageData['internalDate'];
+        if ($ms > 0) {
+            return date('Y-m-d H:i', (int) floor($ms / 1000));
+        }
+    }
+
+    return '';
+}
+
 function parseerEmailAdressenUitHeaderTekst($headerTekst)
 {
     // Haal 1 of meerdere e-mailadressen uit een header-string (To/Cc/Delivered-To/etc).
@@ -1143,6 +1166,9 @@ function zorgEmailConceptenAliasKolommen($conn)
         if (!tabelHeeftKolom($conn, 'email_concepten', 'onderwerp')) {
             $conn->exec("ALTER TABLE email_concepten ADD COLUMN onderwerp VARCHAR(255) NULL AFTER gmail_thread_id");
         }
+        if (!tabelHeeftKolom($conn, 'email_concepten', 'ontvangen_op_gmail')) {
+            $conn->exec("ALTER TABLE email_concepten ADD COLUMN ontvangen_op_gmail VARCHAR(255) NULL AFTER onderwerp");
+        }
         if (!tabelHeeftKolom($conn, 'email_concepten', 'ontvangen_op_email')) {
             $conn->exec("ALTER TABLE email_concepten ADD COLUMN ontvangen_op_email VARCHAR(255) NULL AFTER klant_email");
         }
@@ -1170,11 +1196,12 @@ function bestaatEmailConceptVoorThread($conn, $threadId)
     return (bool) $stmt->fetch();
 }
 
-function voegEmailConceptToe($conn, $threadId, $klantEmail, $conceptTekst, $ontvangenOpEmail = '', $afzenderAliasEmail = '', $onderwerp = '')
+function voegEmailConceptToe($conn, $threadId, $klantEmail, $conceptTekst, $ontvangenOpEmail = '', $afzenderAliasEmail = '', $onderwerp = '', $ontvangenOpGmail = '')
 {
     // Dit slaat het concept op als draft.
     zorgEmailConceptenAliasKolommen($conn);
     $heeftOnderwerp = tabelHeeftKolom($conn, 'email_concepten', 'onderwerp');
+    $heeftOntvangenGmail = tabelHeeftKolom($conn, 'email_concepten', 'ontvangen_op_gmail');
     $heeftOntvangen = tabelHeeftKolom($conn, 'email_concepten', 'ontvangen_op_email');
     $heeftAfzender = tabelHeeftKolom($conn, 'email_concepten', 'afzender_alias_email');
 
@@ -1189,6 +1216,11 @@ function voegEmailConceptToe($conn, $threadId, $klantEmail, $conceptTekst, $ontv
         $kolommen[] = 'onderwerp';
         $placeholders[] = ':onderwerp';
         $params[':onderwerp'] = (string) $onderwerp;
+    }
+    if ($heeftOntvangenGmail) {
+        $kolommen[] = 'ontvangen_op_gmail';
+        $placeholders[] = ':ontvangen_gmail';
+        $params[':ontvangen_gmail'] = (string) $ontvangenOpGmail;
     }
     if ($heeftOntvangen) {
         $kolommen[] = 'ontvangen_op_email';
@@ -1874,6 +1906,8 @@ function runEmailSyncOnce($conn, $maxResults = 5)
                 continue;
             }
 
+            $ontvangenOpGmail = formatteerGmailOntvangstTijdVoorDashboard($data, $headers);
+
             $rulesResult = verwerkEmailRulesVoorMail($actieveRegels, $from, $subject);
             if (!empty($rulesResult['ignore'])) {
                 // Regels kunnen zeggen: deze mail negeren. We labelen hem dan wel als verwerkt.
@@ -1947,7 +1981,7 @@ function runEmailSyncOnce($conn, $maxResults = 5)
                 continue;
             }
 
-            voegEmailConceptToe($conn, $threadId, $klantEmail, $conceptTekst, $ontvangerEmail, $afzenderAlias, $subject);
+            voegEmailConceptToe($conn, $threadId, $klantEmail, $conceptTekst, $ontvangerEmail, $afzenderAlias, $subject, $ontvangenOpGmail);
             if ($aiLabelId !== '') {
                 // Labelen is onze "idempotency": voorkomt dubbel verwerken.
                 gmailApiRequest('POST', 'users/me/messages/' . rawurlencode($msgId) . '/modify', $accessToken, [
@@ -2720,8 +2754,10 @@ if (empty($_GET['email_worker'])) {
 
 // We halen de lijst uit de database (snel).
 // Als er een zoekterm is, filteren we op: klant e-mail, onderwerp en tekst.
+$conn && zorgEmailConceptenAliasKolommen($conn);
+$heeftOntvangenGmail = tabelHeeftKolom($conn, 'email_concepten', 'ontvangen_op_gmail');
 $params = [];
-$sql = "SELECT id, gmail_thread_id, klant_email, onderwerp, created_at, updated_at
+$sql = "SELECT id, gmail_thread_id, klant_email, onderwerp, created_at, updated_at" . ($heeftOntvangenGmail ? ", ontvangen_op_gmail" : "") . "
         FROM email_concepten
         WHERE status = 'draft'";
 if ($zoekTerm !== '') {
@@ -2891,8 +2927,10 @@ if (empty($rows)) {
         }
         $lijstHtml .= '<a href="' . e($url) . '" style="display:block; text-decoration:none; border:1px solid ' . $border . '; background:' . $bg . '; border-radius:12px; padding:10px 12px; margin-bottom:10px;">';
         $lijstHtml .= '<div style="font-weight:800; color:#111827;">' . e($titelLinks) . '</div>';
-        $laatste = isset($r['updated_at']) ? (string) $r['updated_at'] : (string) $r['created_at'];
-        $lijstHtml .= '<div style="margin-top:4px; color:#111827; font-size:13px;">Laatste: ' . e($laatste) . '</div>';
+        $ontvangenGmail = $heeftOntvangenGmail && isset($r['ontvangen_op_gmail']) ? trim((string) $r['ontvangen_op_gmail']) : '';
+        $laatste = $ontvangenGmail !== '' ? $ontvangenGmail : (isset($r['updated_at']) ? (string) $r['updated_at'] : (string) $r['created_at']);
+        $label = $ontvangenGmail !== '' ? 'Ontvangen (Gmail)' : 'Laatste';
+        $lijstHtml .= '<div style="margin-top:4px; color:#111827; font-size:13px;">' . e($label) . ': ' . e($laatste) . '</div>';
         $lijstHtml .= '<div style="margin-top:2px; color:#111827; font-size:13px;">Status: concept</div>';
         $lijstHtml .= '<div style="margin-top:2px; color:#111827; font-size:13px;">Klant: ' . e($r['klant_email']) . '</div>';
         $lijstHtml .= '</a>';
@@ -2918,6 +2956,13 @@ if (!$concept) {
         if (!empty($thread['ok']) && isset($thread['data']['messages']) && is_array($thread['data']['messages'])) {
             $messages = $thread['data']['messages'];
             $firstSubject = '';
+            $ontvangenOpGmail = '';
+            $lastMsg = end($messages);
+            if (is_array($lastMsg)) {
+                $lastPayload = $lastMsg['payload'] ?? [];
+                $lastHeaders = (is_array($lastPayload) && isset($lastPayload['headers']) && is_array($lastPayload['headers'])) ? $lastPayload['headers'] : [];
+                $ontvangenOpGmail = formatteerGmailOntvangstTijdVoorDashboard($lastMsg, $lastHeaders);
+            }
             foreach ($messages as $m) {
                 if (!is_array($m)) {
                     continue;
@@ -2943,9 +2988,19 @@ if (!$concept) {
                     }
                 }
             }
+            if ($ontvangenOpGmail !== '' && tabelHeeftKolom($conn, 'email_concepten', 'ontvangen_op_gmail')) {
+                try {
+                    $upd = $conn->prepare("UPDATE email_concepten SET ontvangen_op_gmail = :d WHERE id = :id AND (ontvangen_op_gmail IS NULL OR ontvangen_op_gmail = '')");
+                    $upd->execute([
+                        ':d' => $ontvangenOpGmail,
+                        ':id' => (int) $concept['id'],
+                    ]);
+                } catch (Throwable) {
+                }
+            }
 
             $blocks = [];
-            foreach ($messages as $m) {
+            foreach (array_reverse($messages) as $m) {
                 if (!is_array($m)) {
                     continue;
                 }
