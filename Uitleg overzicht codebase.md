@@ -152,6 +152,6 @@ Code-links in dit document zijn relatief (werken in GitHub én als je de repo lo
   - check of system0 goed labelt in [system0.php](include/ChatGPT/system0.php#L4)
 - Bot gokt over voorraad/prijs:
   - check worker log of `zoek_productvoorraad` wordt aangeroepen
-  - check tool forcing in [worker.php:L1072](api/chat/worker.php#L1072)
+  - check tool forcing in [worker.php:L736](api/chat/worker.php#L736)
 - Model/kwaliteit aanpassen:
   - zet `CHAT_MODEL_MODE=1` in `.env` (5.2) of `2` (5-mini) of `3` (4.1-mini)
