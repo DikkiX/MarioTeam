@@ -94,19 +94,39 @@ Code-links in dit document zijn relatief (werken in GitHub én als je de repo lo
 
 - Bestand: [EmailDashboard.php](EmailDashboard.php)
 - Doet:
-  - Inloggen + beveiliging tegen nep-verzoeken.
+  - Inloggen + basis beveiliging tegen nep-verzoeken.
   - Gmail token lezen/refreshen.
   - Mails ophalen + AI-concepten aanmaken + concepten beheren.
 
+### Belangrijke begrippen (simpel uitgelegd)
+- CSRF:
+  - Dit is een aanval waarbij iemand jouw browser (terwijl je ingelogd bent) een actie laat doen.
+  - Daarom zit er in elk formulier een verborgen token. Zonder dat token worden POST-acties geweigerd.
+- “Worker”:
+  - Dit is een stukje code dat mails ophaalt en concepten aanmaakt.
+  - Op shared hosting kan dit niet echt 24/7 draaien; het draait alleen als er een request is.
+- Gmail labels:
+  - `UNREAD` + `INBOX` = de sync zoekt standaard alleen naar ongelezen inbox-mails.
+  - `AI_CONCEPT` = label dat we op Gmail zetten zodra een mail is verwerkt, zodat we hem niet dubbel verwerken.
+
 ### OpenAI call voor e-mailconcepten
 - Functie:
-  - [roepOpenAiAanVoorEmailConcept](EmailDashboard.php#L874) in [EmailDashboard.php](EmailDashboard.php)
+  - [roepOpenAiAanVoorEmailConcept](EmailDashboard.php#L1220) in [EmailDashboard.php](EmailDashboard.php)
 - Model:
   - Gebruikt ook `CHAT_MODEL_MODE` uit `.env` (zelfde mapping als chat).
-- Waarom deze eigen cURL call bestaat (en niet CHATGPT()):
-  - Nette foutafhandeling met HTTP status + OpenAI error message.
-  - Timeout zodat dashboard niet blijft hangen.
-  - Return-structuur met `['ok'=>true/false, 'content/error'=>...]`.
+- Let op (verschil met chat):
+  - De chat-worker kan tools/function-calling gebruiken (order/voorraad).
+  - Het e-mailconcept gebruikt nu de centrale helper [ChatFunction.php](include/ChatFunction.php) (`CHATGPT(...)`) en maakt één antwoord per mail.
+
+### System0 in e-mail (alleen als je het echt gebruikt)
+- System0 is een extra AI-stap die een label teruggeeft zoals “Zending” of “Service”.
+- Daarna kun je op basis van dat label alleen de juiste FAQ inladen (kortere prompt).
+- System0 doet niet “automatisch” iets; je moet het label daarna zelf gebruiken in de code.
+
+### Sync: waarom je soms niet “alle mails” ziet
+- De sync zoekt standaard op `is:unread` en `labelIds=INBOX`.
+- Als een mail al gelezen is gemaakt, of niet meer in INBOX zit, dan pakt de sync hem niet.
+- De sync is nu gepagineerd (dus hij kan meer dan de nieuwste batch ophalen).
 
 ## 4) Database (belangrijkste tabellen)
 

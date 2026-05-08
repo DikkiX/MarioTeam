@@ -28,13 +28,18 @@ function stuurHtml($httpStatus, $html)
 
 function e($value)
 {
-    // Dit voorkomt dat HTML uit de database als echte HTML wordt uitgevoerd.
+    // Escape helper:
+    // Alles wat je in HTML echo't (ook uit de database) moet je "escapen".
+    // Anders kan er per ongeluk HTML/JS uitgevoerd worden in de browser.
     return htmlspecialchars((string) $value, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
 }
 
 function csrfToken()
 {
-    // Dit token zorgt dat alleen onze eigen formulieren acties mogen uitvoeren.
+    // CSRF = iemand probeert jouw browser "stiekem" een actie te laten uitvoeren (bijv. verwijderen),
+    // terwijl jij al ingelogd bent.
+    // Dit token is een willekeurige sleutel die we in de session bewaren en in elk formulier stoppen.
+    // Bij POST controleren we of het token klopt. Zo weten we: het komt echt van ons formulier.
     if (!isset($_SESSION['csrf'])) {
         $_SESSION['csrf'] = bin2hex(random_bytes(16));
     }
@@ -43,7 +48,8 @@ function csrfToken()
 
 function vereisCsrf()
 {
-    // Als het token niet klopt, blokkeren we de aanvraag.
+    // Beveiligingscheck voor alle POST acties:
+    // Als CSRF token ontbreekt of anders is: request afbreken.
     $token = isset($_POST['csrf']) ? (string) $_POST['csrf'] : '';
     if (!isset($_SESSION['csrf']) || !hash_equals((string) $_SESSION['csrf'], $token)) {
         stuurHtml(400, '<h1>Ongeldige aanvraag</h1><p>CSRF token klopt niet.</p>');
@@ -80,6 +86,9 @@ function renderLoginPagina($melding = '')
 function vereisDashboardLogin()
 {
     // Simpele interne login voor medewerkers (waardes staan in .env).
+    // We gebruiken PHP sessions:
+    // - na inloggen zetten we een vlag in $_SESSION
+    // - bij elke pagina-load checken we die vlag
     $user = getProjectEnvValue('EMAIL_DASHBOARD_USER');
     $pass = getProjectEnvValue('EMAIL_DASHBOARD_PASS');
 
@@ -92,11 +101,13 @@ function vereisDashboardLogin()
         $gegevenUser = isset($_POST['user']) ? (string) $_POST['user'] : '';
         $gegevenPass = isset($_POST['pass']) ? (string) $_POST['pass'] : '';
 
+        // hash_equals = veilig vergelijken (zodat timing geen info lekt).
         $isOk = hash_equals((string) $user, $gegevenUser) && hash_equals((string) $pass, $gegevenPass);
         if (!$isOk) {
             renderLoginPagina('Gebruikersnaam of wachtwoord is verkeerd.');
         }
 
+        // Onthoud "ingelogd" in de session.
         $_SESSION['email_dashboard_authed'] = true;
 
         $locatie = isset($_SERVER['REQUEST_URI']) ? (string) $_SERVER['REQUEST_URI'] : '/EmailDashboard.php';
@@ -105,11 +116,13 @@ function vereisDashboardLogin()
     }
 
     if (!empty($_GET['logout'])) {
+        // Logout = sessie vlag uitzetten en login pagina tonen.
         $_SESSION['email_dashboard_authed'] = false;
         renderLoginPagina('Je bent uitgelogd.');
     }
 
     if (empty($_SESSION['email_dashboard_authed'])) {
+        // Niet ingelogd -> eerst login pagina tonen.
         renderLoginPagina();
     }
 }
@@ -653,13 +666,17 @@ function zoekTekstHtmlInPayload($payload)
 
 function normaliseerTekst($text)
 {
+    // Maakt tekst voorspelbaar: overal \n en geen grote lege blokken.
     $text = str_replace(["\r\n", "\r"], "\n", (string) $text);
     $text = preg_replace("/\n{3,}/", "\n\n", $text);
     return trim((string) $text);
 }
 
-function haalKennisVoorEmailAi()
+function haalKennisVoorEmailAi($assistant0 = '')
 {
+    // Bouwt een korte "kennis" tekst voor de AI.
+    // Dit is vooral bedoeld om standaard informatie (FAQ + contact + openingstijden) mee te geven,
+    // zodat de AI minder hoeft te gokken.
     $docRoot = isset($_SERVER['DOCUMENT_ROOT']) ? (string) $_SERVER['DOCUMENT_ROOT'] : '';
     if ($docRoot === '') {
         return '';
@@ -668,13 +685,35 @@ function haalKennisVoorEmailAi()
     $pathMijnEmail = $docRoot . '/include/mijnemail_universeel.inc';
     $pathContact = $docRoot . '/include/contact.inc';
 
-    $faqPaths = [
-        $docRoot . '/include/ChatGPT/aankoop.php',
-        $docRoot . '/include/ChatGPT/zending.php',
-        $docRoot . '/include/ChatGPT/service.php',
-        $docRoot . '/include/ChatGPT/inkoop.php',
-        $docRoot . '/include/ChatGPT/loyaliteit.php',
-    ];
+    $assistant0 = is_string($assistant0) ? trim($assistant0) : '';
+    $faqPaths = [];
+    if ($assistant0 !== '') {
+        if (preg_match("/Aankoop/i", (string) $assistant0) === 1) {
+            $faqPaths[] = $docRoot . '/include/ChatGPT/aankoop.php';
+        }
+        if (preg_match("/Zending/i", (string) $assistant0) === 1) {
+            $faqPaths[] = $docRoot . '/include/ChatGPT/zending.php';
+        }
+        if (preg_match("/Service/i", (string) $assistant0) === 1) {
+            $faqPaths[] = $docRoot . '/include/ChatGPT/service.php';
+        }
+        if (preg_match("/Inkoop/i", (string) $assistant0) === 1) {
+            $faqPaths[] = $docRoot . '/include/ChatGPT/inkoop.php';
+        }
+        if (preg_match("/Loyaliteit/i", (string) $assistant0) === 1) {
+            $faqPaths[] = $docRoot . '/include/ChatGPT/loyaliteit.php';
+        }
+    }
+    if (empty($faqPaths)) {
+        $faqPaths = [
+            // Deze bestanden vullen de $FAQ array met HTML-tekstblokken (op site + voor bot).
+            $docRoot . '/include/ChatGPT/aankoop.php',
+            $docRoot . '/include/ChatGPT/zending.php',
+            $docRoot . '/include/ChatGPT/service.php',
+            $docRoot . '/include/ChatGPT/inkoop.php',
+            $docRoot . '/include/ChatGPT/loyaliteit.php',
+        ];
+    }
 
     $heeftBestanden = is_file($pathMijnEmail) || is_file($pathContact);
     if (!$heeftBestanden) {
@@ -698,14 +737,17 @@ function haalKennisVoorEmailAi()
 
     ob_start();
     if (is_file($pathMijnEmail)) {
+        // Universele variabelen (o.a. contacttijden) die contact.inc gebruikt.
         include_once $pathMijnEmail;
     }
     foreach ($faqPaths as $p) {
         if (is_file($p)) {
+            // Deze includes vullen $FAQ[...] met content.
             include $p;
         }
     }
     if (is_file($pathContact)) {
+        // Contactpagina bouwt $bodymain3 met HTML (werktijden/gegevens).
         include_once $pathContact;
     }
     $echoed = ob_get_clean();
@@ -713,6 +755,7 @@ function haalKennisVoorEmailAi()
     restore_error_handler();
 
     $stripHtmlNaarTekst = function ($html) {
+        // Veel van de bestaande content is HTML. Voor de prompt maken we daar platte tekst van.
         $t = str_replace(["\r\n", "\r"], "\n", (string) $html);
         $t = preg_replace('/<\s*head\b[^>]*>[\s\S]*?<\s*\/\s*head\s*>/i', '', (string) $t);
         $t = preg_replace('/<\s*style\b[^>]*>[\s\S]*?<\s*\/\s*style\s*>/i', '', (string) $t);
@@ -741,6 +784,7 @@ function haalKennisVoorEmailAi()
     if (is_string($echoed) && trim($echoed) !== '') {
         $contactHtml .= "\n" . $echoed;
     }
+    // Contact houden we expres kort; dit moet vooral "bedrijf/werktijden" zijn.
     $contactText = $stripHtmlNaarTekst($contactHtml);
     if ($contactText !== '' && strlen($contactText) > 2000) {
         $contactText = rtrim(substr($contactText, 0, 2000));
@@ -749,6 +793,7 @@ function haalKennisVoorEmailAi()
     $faqText = '';
     $FAQ = (isset($FAQ) && is_array($FAQ)) ? $FAQ : [];
     if (!empty($FAQ)) {
+        // De rest van de ruimte is voor FAQ-kennis (liefst zo veel mogelijk, maar met harde max).
         $doelLen = max(1000, $maxLen - strlen($contactText) - 30);
         $faqText = "FAQ:\n";
         foreach ($FAQ as $valueArray) {
@@ -793,8 +838,38 @@ function haalKennisVoorEmailAi()
     return $result;
 }
 
+function haalAssistant0VoorEmail($onderwerp, $klantTekst, $threadContext = '')
+{
+    $docRoot = isset($_SERVER['DOCUMENT_ROOT']) ? (string) $_SERVER['DOCUMENT_ROOT'] : '';
+    if ($docRoot === '') {
+        return '';
+    }
+
+    $system0 = '';
+    try {
+        include_once $docRoot . '/include/ChatGPT/system0.php';
+        $system0 = isset($system0) ? trim((string) $system0) : '';
+    } catch (Throwable) {
+        $system0 = '';
+    }
+    if ($system0 === '') {
+        return '';
+    }
+
+    $input = "Onderwerp: " . (string) $onderwerp;
+    if (is_string($threadContext) && trim($threadContext) !== '') {
+        $input .= "\n\nEerdere berichten (ingekort):\n" . trim((string) $threadContext);
+    }
+    $input .= "\n\nLaatste klantmail:\n" . (string) $klantTekst;
+
+    $mode = function_exists('getChatModelMode') ? getChatModelMode() : 2;
+    $label = CHATGPT($input, $system0, 0.2, $mode, [], 0);
+    return is_string($label) ? trim($label) : '';
+}
+
 function stripQuotedEnHandtekeningTekst($text)
 {
+    // Neemt "oude replies" en handtekeningen weg, zodat we alleen de echte vraag overhouden.
     $t = normaliseerTekst($text);
     if ($t === '') {
         return '';
@@ -1168,7 +1243,8 @@ function roepOpenAiAanVoorEmailConcept($onderwerp, $klantTekst, $extraInstructie
     if (is_string($extraInstructies) && trim($extraInstructies) !== '') {
         $system .= "\n\nExtra regels/instructies:\n" . trim($extraInstructies);
     }
-    $kennis = haalKennisVoorEmailAi();
+    $assistant0 = haalAssistant0VoorEmail($onderwerp, $klantTekst, $threadContext);
+    $kennis = haalKennisVoorEmailAi($assistant0);
     if (is_string($kennis) && trim($kennis) !== '') {
         $system .= "\n\nRelevante informatie (FAQ/contact/werktijden/bedrijfsgegevens):\n" . trim($kennis);
     }
@@ -1591,6 +1667,7 @@ function haalOfMaakEmailWorkerSecret($conn)
 function openEmailSyncLockHandle()
 {
     // Dit is een "slotje" zodat de sync niet twee keer tegelijk kan draaien.
+    // Handig omdat meerdere page-loads tegelijk kunnen triggeren.
     $logMap = $_SERVER['DOCUMENT_ROOT'] . '/storage/logs';
     if (!is_dir($logMap)) {
         @mkdir($logMap, 0775, true);
@@ -1610,12 +1687,17 @@ function openEmailSyncLockHandle()
 
 function runEmailSyncOnce($conn, $maxResults = 5)
 {
-    // Doe 1 keer sync: haal ongelezen mails op, maak concepten, markeer mails als gelezen.
+    // Doe 1 keer sync:
+    // 1) haal ongelezen INBOX mails op
+    // 2) maak AI concepten
+    // 3) label de mail als "verwerkt" zodat we niet dubbel werken
     $maxResults = (int) $maxResults;
     if ($maxResults <= 0) {
         $maxResults = 1;
     }
     if ($maxResults > 500) {
+        // Gmail geeft per pagina maximaal een beperkt aantal items terug.
+        // In de praktijk is 500 een stevige "catch-up" batch.
         $maxResults = 500;
     }
 
@@ -1629,6 +1711,7 @@ function runEmailSyncOnce($conn, $maxResults = 5)
 
     // We willen dat mails ongeopend blijven tot er echt gereageerd is.
     // Daarom zetten we ze niet op "gelezen", maar geven we ze een label als we ze verwerkt hebben.
+    // Zo kan klantenservice nog steeds in Gmail zien dat hij ongelezen is, maar wij slaan hem wel over.
     $aiLabelNaam = 'AI_CONCEPT';
     $aiLabelId = gmailZorgLabelId($accessToken, $aiLabelNaam);
 
@@ -1732,8 +1815,11 @@ function runEmailSyncOnce($conn, $maxResults = 5)
     $pageToken = '';
 
     while (true) {
+        // Gmail API werkt met pagina's (nextPageToken). Zo kunnen we "alles ongelezen" ophalen.
         $params = [
+            // Alleen INBOX, want anders pak je ook spam/promoties/archief.
             'labelIds' => 'INBOX',
+            // Alleen ongelezen, zodat we niet eindeloos dezelfde mails verwerken.
             'q' => 'is:unread',
             'maxResults' => $maxResults,
         ];
@@ -1790,6 +1876,7 @@ function runEmailSyncOnce($conn, $maxResults = 5)
 
             $rulesResult = verwerkEmailRulesVoorMail($actieveRegels, $from, $subject);
             if (!empty($rulesResult['ignore'])) {
+                // Regels kunnen zeggen: deze mail negeren. We labelen hem dan wel als verwerkt.
                 if ($aiLabelId !== '') {
                     gmailApiRequest('POST', 'users/me/messages/' . rawurlencode($msgId) . '/modify', $accessToken, [
                         'addLabelIds' => [$aiLabelId],
@@ -1827,6 +1914,7 @@ function runEmailSyncOnce($conn, $maxResults = 5)
                 $text = zoekTekstHtmlInPayload($payload);
             }
             if (!is_string($text) || $text === '') {
+                // Snippet is een korte Gmail preview. Alleen gebruiken als we echt geen body vinden.
                 $text = isset($data['snippet']) ? (string) $data['snippet'] : '';
             }
             $text = normaliseerTekst($text);
@@ -1838,6 +1926,7 @@ function runEmailSyncOnce($conn, $maxResults = 5)
             $extraInstructies = isset($rulesResult['extra_instructies']) ? (string) $rulesResult['extra_instructies'] : '';
             $threadContext = '';
             try {
+                // Thread context is handig bij vervolgvragen ("zoals eerder besproken...").
                 $t = gmailApiRequest('GET', 'users/me/threads/' . rawurlencode($threadId), $accessToken, null, ['format' => 'full']);
                 if (!empty($t['ok']) && isset($t['data']['messages']) && is_array($t['data']['messages'])) {
                     $threadContext = bouwThreadContextVoorAi($t['data']['messages'], $klantEmail, 5);
@@ -1860,6 +1949,7 @@ function runEmailSyncOnce($conn, $maxResults = 5)
 
             voegEmailConceptToe($conn, $threadId, $klantEmail, $conceptTekst, $ontvangerEmail, $afzenderAlias, $subject);
             if ($aiLabelId !== '') {
+                // Labelen is onze "idempotency": voorkomt dubbel verwerken.
                 gmailApiRequest('POST', 'users/me/messages/' . rawurlencode($msgId) . '/modify', $accessToken, [
                     'addLabelIds' => [$aiLabelId],
                 ]);
@@ -1878,7 +1968,8 @@ function runEmailSyncOnce($conn, $maxResults = 5)
 
 function triggerEmailSyncWorkerInBackground($conn)
 {
-    // Start de worker zonder te wachten op antwoord (zoals de chat worker).
+    // Start de worker zonder te wachten op antwoord.
+    // Dit maakt de pagina-load sneller: de user ziet meteen het dashboard, sync loopt "achter de schermen".
     $host = $_SERVER['SERVER_NAME'] ?? ($_SERVER['HTTP_HOST'] ?? '');
     $host = preg_replace('/[^a-zA-Z0-9.\-]/', '', (string) $host);
     if (!is_string($host) || $host === '') {
@@ -1974,6 +2065,7 @@ if (isset($_GET['email_worker']) && (string) $_GET['email_worker'] === '1') {
 
     $result = null;
     try {
+        // Grote batch, zodat we ook na een weekend/afwezigheid kunnen "inhalen".
         $result = runEmailSyncOnce($conn, 500);
     } catch (Throwable $e) {
         schrijfEmailWorkerLog('Worker fout: ' . $e->getMessage());
@@ -2370,7 +2462,7 @@ function renderLayout($titel, $contentHtml, $melding, $meldingType)
         $msgHtml = '<div style="background:' . $bg . '; border:1px solid ' . $bd . '; padding:10px 12px; border-radius:10px; margin:12px 0;">' . e($melding) . '</div>';
     }
 
-    $html = '<!doctype html><html lang="nl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="robots" content="noindex, nofollow"><title>' . e($titel) . '</title><style>:root{--grid-main-cols:360px 1fr;--grid-settings-cols:260px 1fr;--list-max-h:calc(100vh - 220px);}@media (max-width: 900px){:root{--grid-main-cols:1fr;--grid-settings-cols:1fr;--list-max-h:260px;}body{padding:14px!important;}}</style></head><body style="font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; background:#e5e7eb; color:#111827; margin:0; padding:22px;">';
+    $html = '<!doctype html><html lang="nl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="robots" content="noindex, nofollow"><title>' . e($titel) . '</title><style>:root{--grid-main-cols:360px 1fr;--grid-settings-cols:260px 1fr;--list-max-h:calc(100vh - 220px);--thread-max-h:50vh;}@media (max-width: 900px){:root{--grid-main-cols:1fr;--grid-settings-cols:1fr;--list-max-h:260px;--thread-max-h:40vh;}body{padding:14px!important;}}</style></head><body style="font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; background:#e5e7eb; color:#111827; margin:0; padding:22px;">';
     $html .= '<div style="max-width: 1200px; margin:0 auto;">';
     $html .= '<div style="display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:12px; margin-bottom:14px; padding:10px 12px; background:#f3f4f6; border:1px solid #9ca3af; border-radius:12px;">';
     $html .= '<div style="font-weight:800; font-size:18px;">Mario Team - AI E-mail Concepten Module</div>';
@@ -2617,6 +2709,7 @@ if ($settings) {
 
 if (empty($_GET['email_worker'])) {
     // Bij openen van het overzicht starten we de worker op de achtergrond (niet wachten).
+    // Als iemand het dashboard open laat, blijft hij hierdoor "af en toe" syncen.
     $cooldownSec = 15;
     $vorigeTrigger = isset($_SESSION['email_dashboard_worker_trigger_at']) ? (int) $_SESSION['email_dashboard_worker_trigger_at'] : 0;
     if ((time() - $vorigeTrigger) >= $cooldownSec) {
@@ -2906,11 +2999,13 @@ if (!$concept) {
 
     $detailHtml .= '<div style="border:1px solid #9ca3af; background:#ffffff; border-radius:12px; padding:10px 12px; margin-bottom:12px;">';
     $detailHtml .= '<div style="font-weight:800; margin-bottom:6px;">Gespreksgeschiedenis:</div>';
+    $detailHtml .= '<div style="max-height: var(--thread-max-h); overflow-y:auto; padding-right:10px; -webkit-overflow-scrolling:touch;">';
     if (is_string($threadHtml) && $threadHtml !== '') {
         $detailHtml .= $threadHtml;
     } else {
         $detailHtml .= '<div style="color:#6b7280;">Niet beschikbaar. OAuth/token of thread ophalen is nog niet gelukt.</div>';
     }
+    $detailHtml .= '</div>';
     $detailHtml .= '</div>';
 
     $detailHtml .= '<div style="border:1px solid #9ca3af; background:#ffffff; border-radius:12px; padding:10px 12px;">';
