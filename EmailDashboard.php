@@ -1095,19 +1095,26 @@ function formatteerGmailOntvangstTijdVoorDashboard($gmailMessageData, $headers)
 {
     // Voor de lijst willen we de ontvangstmoment-tijd van Gmail tonen (niet het moment dat wij het concept opslaan).
     // We proberen eerst de "Date" header, en vallen terug op Gmail internalDate.
+    $tz = new DateTimeZone('Europe/Amsterdam');
     $dateHeader = is_array($headers) ? (haalHeaderOp($headers, 'Date') ?? '') : '';
     $dateHeader = is_string($dateHeader) ? trim($dateHeader) : '';
     if ($dateHeader !== '') {
-        $ts = strtotime($dateHeader);
-        if (is_int($ts) && $ts > 0) {
-            return date('Y-m-d H:i', $ts);
+        try {
+            $dt = new DateTimeImmutable($dateHeader);
+            return $dt->setTimezone($tz)->format('Y-m-d H:i');
+        } catch (Throwable) {
         }
     }
 
     if (is_array($gmailMessageData) && isset($gmailMessageData['internalDate'])) {
         $ms = (int) $gmailMessageData['internalDate'];
         if ($ms > 0) {
-            return date('Y-m-d H:i', (int) floor($ms / 1000));
+            try {
+                $sec = (int) floor($ms / 1000);
+                $dt = new DateTimeImmutable('@' . (string) $sec);
+                return $dt->setTimezone($tz)->format('Y-m-d H:i');
+            } catch (Throwable) {
+            }
         }
     }
 
@@ -1344,9 +1351,7 @@ function roepOpenAiAanVoorEmailConcept($onderwerp, $klantTekst, $extraInstructie
 
     $model = function_exists('getChatModelName') ? getChatModelName() : 'gpt-4.1-mini';
 
-    // Belangrijk: we willen geen tijd verspillen met "kunt u dit bevestigen?" als het al in de mail staat.
-    // Daarom: ontbrekende gegevens vragen, maar aanwezige gegevens direct gebruiken.
-    $system = 'Je schrijft een concept-antwoord voor de klantenservice van de webshops van MarioTeam. Schrijf in het Nederlands. Als informatie ontbreekt, stel eerst korte, duidelijke vragen. Geef geen exacte voorraadaantallen. Als de klant om ordergegevens vraagt: vraag alleen om ontbrekende gegevens (bestelnummer en/of e-mailadres). Als ze al in de tekst staan, vraag niet om bevestiging maar gebruik ze. Als er orderdata uit de database is meegegeven, baseer je antwoord daarop en verzin niets. Als er geen orderdata is meegegeven (niet gevonden of lookup niet beschikbaar), zeg dan dat je de bestelling met die combinatie niet kunt vinden en vraag de klant om te controleren. Zeg in dat geval niet dat de bestelling bestaat/ontvangen is en noem geen verzendstatus of track&trace. Als de klant naar actuele prijs/voorraad vraagt, zeg dat je dat niet live kunt checken in e-mail en verwijs naar de website of de chat. Geef alleen het antwoord (geen uitleg over je stappen).';
+    $system = 'Je schrijft een concept-antwoord voor de klantenservice van de webshops van MarioTeam. Schrijf in het Nederlands. Als informatie ontbreekt, stel eerst korte, duidelijke vragen. Geef geen exacte voorraadaantallen. Als de klant om ordergegevens vraagt: vraag alleen om ontbrekende gegevens (bestelnummer en/of e-mailadres). Als ze al in de tekst staan, vraag niet om bevestiging maar gebruik ze. Als er orderdata uit de database is meegegeven, baseer je antwoord daarop en verzin niets. Als order lookup NIET GEVONDEN is (of niet beschikbaar): zeg expliciet dat je de bestelling met deze combinatie (bestelnummer + e-mailadres) niet kunt terugvinden, dat dit vaak een typefout of ander e-mailadres is, en vraag de klant om te controleren. Zeg in dat geval niet dat de bestelling bestaat/ontvangen is en noem geen verzendstatus of track&trace. Als de klant naar actuele prijs/voorraad vraagt, zeg dat je dat niet live kunt checken in e-mail en verwijs naar de website of de chat. Geef alleen het antwoord (geen uitleg over je stappen).';
     $tone = '';
     try {
         if (isset($conn) && $conn) {
@@ -1372,6 +1377,7 @@ function roepOpenAiAanVoorEmailConcept($onderwerp, $klantTekst, $extraInstructie
     $orderInfo = extracteerBestelEnEmailUitTekst($klantTekst);
     $bestellingId = isset($orderInfo['bestelling_id']) ? (int) $orderInfo['bestelling_id'] : 0;
     $emailInTekst = isset($orderInfo['email']) ? (string) $orderInfo['email'] : '';
+    $orderLookupStatus = '';
     if ($bestellingId > 0 && $emailInTekst !== '' && isset($conn) && ($conn instanceof PDO)) {
         try {
             $orderResult = zoekBestellingRuw($conn, $bestellingId, $emailInTekst);
@@ -1380,13 +1386,14 @@ function roepOpenAiAanVoorEmailConcept($onderwerp, $klantTekst, $extraInstructie
                 if ($orderText !== '') {
                     $system .= "\n\nOrdergegevens uit database:\n" . $orderText;
                 }
+                $orderLookupStatus = 'GEVONDEN';
             } else {
-                // Niets gevonden: geen hallucinaties. De AI krijgt een duidelijke instructie om te vragen om controle.
                 $system .= "\n\nOrder lookup:\nNIET GEVONDEN voor de opgegeven combinatie. Zeg dat je de bestelling met deze gegevens niet kunt vinden en vraag de klant om bestelnummer en e-mailadres te controleren.";
+                $orderLookupStatus = 'NIET GEVONDEN';
             }
         } catch (Throwable) {
-            // Fout in lookup: geen crash. We geven de AI alleen een fallback instructie (geen privédata loggen).
             $system .= "\n\nOrder lookup:\nNIET BESCHIKBAAR. Geef geen orderstatus/track&trace en vraag de klant om bestelnummer en e-mailadres te controleren.";
+            $orderLookupStatus = 'NIET BESCHIKBAAR';
         }
     }
     $user = "Onderwerp: " . (string) $onderwerp;
@@ -1395,7 +1402,6 @@ function roepOpenAiAanVoorEmailConcept($onderwerp, $klantTekst, $extraInstructie
     }
     $user .= "\n\nLaatste klantmail:\n" . (string) $klantTekst;
     if ($bestellingId > 0 || $emailInTekst !== '') {
-        // Dit is een korte “samenvatting” voor de AI zodat hij de gegevens niet over het hoofd ziet.
         $user .= "\n\nGegeven gegevens:";
         if ($bestellingId > 0) {
             $user .= "\n- Bestelnummer: " . (string) $bestellingId;
@@ -1403,6 +1409,9 @@ function roepOpenAiAanVoorEmailConcept($onderwerp, $klantTekst, $extraInstructie
         if ($emailInTekst !== '') {
             $user .= "\n- E-mailadres: " . (string) $emailInTekst;
         }
+    }
+    if ($orderLookupStatus !== '') {
+        $user .= "\n\nOrder lookup resultaat: " . $orderLookupStatus;
     }
 
     $mode = function_exists('getChatModelMode') ? getChatModelMode() : 2;
