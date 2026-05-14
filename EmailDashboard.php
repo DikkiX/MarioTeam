@@ -579,6 +579,129 @@ function base64UrlDecode($data)
     return $decoded === false ? '' : $decoded;
 }
 
+function formatteerBestandsgrootte($bytes)
+{
+    // Maak bytes leesbaar voor het dashboard (KB/MB).
+    $bytes = (int) $bytes;
+    if ($bytes <= 0) {
+        return '';
+    }
+    if ($bytes < 1024) {
+        return (string) $bytes . ' B';
+    }
+    if ($bytes < 1024 * 1024) {
+        return number_format($bytes / 1024, 1, ',', '.') . ' KB';
+    }
+    return number_format($bytes / (1024 * 1024), 1, ',', '.') . ' MB';
+}
+
+function normaliseerContentId($cid)
+{
+    // In mails staat Content-ID soms met < en > eromheen. Die halen we weg.
+    $cid = trim((string) $cid);
+    if ($cid === '') {
+        return '';
+    }
+    return trim($cid, "<> \t\r\n");
+}
+
+function verzamelBijlagePartsUitPayload($payload, &$result)
+{
+    // Gmail bouwt een mail op uit stukjes (parts). Bijlages zitten meestal als part met een bijlage-id.
+    if (!is_array($payload)) {
+        return;
+    }
+
+    $mimeType = isset($payload['mimeType']) ? strtolower(trim((string) $payload['mimeType'])) : '';
+    $filename = isset($payload['filename']) ? trim((string) $payload['filename']) : '';
+    $headers = (isset($payload['headers']) && is_array($payload['headers'])) ? $payload['headers'] : [];
+
+    $contentId = normaliseerContentId((string) (haalHeaderOp($headers, 'Content-ID') ?? (haalHeaderOp($headers, 'Content-Id') ?? '')));
+    $disp = strtolower((string) (haalHeaderOp($headers, 'Content-Disposition') ?? ''));
+
+    $body = (isset($payload['body']) && is_array($payload['body'])) ? $payload['body'] : [];
+    $attachmentId = isset($body['attachmentId']) ? trim((string) $body['attachmentId']) : '';
+    $size = isset($body['size']) ? (int) $body['size'] : 0;
+
+    $isContainer = ($mimeType === 'multipart/alternative' || $mimeType === 'multipart/mixed' || $mimeType === 'multipart/related');
+
+    // We nemen alleen echte bijlages/plaatjes mee, niet de "container" parts.
+    $isAttachmentLike = !$isContainer && ($attachmentId !== '' || $filename !== '' || $contentId !== '' || ($disp !== '' && strpos($disp, 'attachment') !== false));
+    if ($isAttachmentLike) {
+        $result[] = [
+            'filename' => $filename,
+            'mimeType' => $mimeType,
+            'size' => $size,
+            'attachmentId' => $attachmentId,
+            'contentId' => $contentId,
+        ];
+    }
+
+    if (isset($payload['parts']) && is_array($payload['parts'])) {
+        foreach ($payload['parts'] as $part) {
+            verzamelBijlagePartsUitPayload($part, $result);
+        }
+    }
+}
+
+function haalBijlagesUitPayload($payload)
+{
+    // Geef een platte lijst terug van alle gevonden bijlages in 1 mail.
+    $result = [];
+    verzamelBijlagePartsUitPayload($payload, $result);
+    return $result;
+}
+
+function vindBijlagePartOpAttachmentId($payload, $attachmentId)
+{
+    // Nodig om type + bestandsnaam bij een bijlage-id te vinden.
+    if (!is_array($payload)) {
+        return null;
+    }
+    $body = (isset($payload['body']) && is_array($payload['body'])) ? $payload['body'] : [];
+    $partAtt = isset($body['attachmentId']) ? trim((string) $body['attachmentId']) : '';
+    if ($partAtt !== '' && hash_equals($partAtt, (string) $attachmentId)) {
+        return $payload;
+    }
+    if (isset($payload['parts']) && is_array($payload['parts'])) {
+        foreach ($payload['parts'] as $p) {
+            $found = vindBijlagePartOpAttachmentId($p, $attachmentId);
+            if (is_array($found)) {
+                return $found;
+            }
+        }
+    }
+    return null;
+}
+
+function emailDashboardAttachmentUrl($messageId, $attachmentId, $filename = '', $inline = false)
+{
+    // Deze link gebruiken we om een bijlage te downloaden of een plaatje te tonen.
+    $u = '/EmailDashboard.php?attachment=1&message_id=' . urlencode((string) $messageId) . '&attachment_id=' . urlencode((string) $attachmentId);
+    if ($filename !== '') {
+        $u .= '&filename=' . urlencode((string) $filename);
+    }
+    $u .= $inline ? '&inline=1' : '&download=1';
+    return $u;
+}
+
+function vervangCidSrcInHtml($html, $cidToUrl)
+{
+    // Sommige mails gebruiken <img src="cid:...">. Dat is een interne verwijzing naar een bijlage.
+    // We vervangen dat door een link in het dashboard die het plaatje ophaalt.
+    if (!is_string($html) || trim($html) === '' || !is_array($cidToUrl) || empty($cidToUrl)) {
+        return (string) $html;
+    }
+
+    return preg_replace_callback('/src\s*=\s*(["\'])\s*cid:([^"\'>\s]+)\s*\1/i', function ($m) use ($cidToUrl) {
+        $cid = normaliseerContentId((string) ($m[2] ?? ''));
+        if ($cid === '' || !isset($cidToUrl[$cid])) {
+            return 'src=""';
+        }
+        return 'src="' . htmlspecialchars((string) $cidToUrl[$cid], ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') . '"';
+    }, (string) $html);
+}
+
 function haalHeaderOp($headers, $naam)
 {
     // Gmail geeft headers als lijst met naam + waarde. Deze functie zoekt één header op.
@@ -1030,6 +1153,7 @@ function haalHtmlUitPayload($payload)
 function sanitizeEmailHtmlVoorDashboard($html)
 {
     // We willen opmaak tonen, maar geen scripts/styling/rare attributen uitvoeren.
+    // US24: we laten ook <img> toe, maar alleen als src naar ons eigen dashboard wijst (geen externe plaatjes).
     $html = str_replace(["\r\n", "\r"], "\n", (string) $html);
     $html = preg_replace('/<\s*head\b[^>]*>[\s\S]*?<\s*\/\s*head\s*>/i', '', (string) $html);
     $html = preg_replace('/<\s*style\b[^>]*>[\s\S]*?<\s*\/\s*style\s*>/i', '', (string) $html);
@@ -1037,7 +1161,7 @@ function sanitizeEmailHtmlVoorDashboard($html)
     $html = preg_replace('/<\s*meta\b[^>]*>/i', '', (string) $html);
     $html = preg_replace('/<\s*link\b[^>]*>/i', '', (string) $html);
 
-    $allowed = '<p><br><b><strong><i><em><u><ul><ol><li><a><table><thead><tbody><tr><td><th><div><span><hr>';
+    $allowed = '<p><br><b><strong><i><em><u><ul><ol><li><a><img><table><thead><tbody><tr><td><th><div><span><hr>';
     $html = strip_tags((string) $html, $allowed);
 
     $html = preg_replace('/\son\w+\s*=\s*"[^"]*"/i', '', (string) $html);
@@ -1068,6 +1192,33 @@ function sanitizeEmailHtmlVoorDashboard($html)
         }
 
         return '<a href="' . htmlspecialchars($href, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') . '" target="_blank" rel="noopener noreferrer">';
+    }, (string) $html);
+
+    $html = preg_replace_callback('/<\s*img\b([^>]*)>/i', function ($m) {
+        // We laten alleen afbeeldingen toe die we zelf serveren (geen plaatjes van andere websites).
+        $attrs = (string) ($m[1] ?? '');
+        $src = '';
+        $alt = '';
+        if (preg_match('/src\s*=\s*"([^"]*)"/i', $attrs, $sm) === 1) {
+            $src = (string) ($sm[1] ?? '');
+        } elseif (preg_match("/src\s*=\s*'([^']*)'/i", $attrs, $sm) === 1) {
+            $src = (string) ($sm[1] ?? '');
+        }
+        if (preg_match('/alt\s*=\s*"([^"]*)"/i', $attrs, $am) === 1) {
+            $alt = (string) ($am[1] ?? '');
+        } elseif (preg_match("/alt\s*=\s*'([^']*)'/i", $attrs, $am) === 1) {
+            $alt = (string) ($am[1] ?? '');
+        }
+
+        $src = trim((string) $src);
+        $alt = trim((string) $alt);
+
+        if ($src === '' || preg_match('/^\s*\/EmailDashboard\.php\?attachment=1/i', $src) !== 1) {
+            return '';
+        }
+
+        $safeAlt = $alt !== '' ? ' alt="' . htmlspecialchars($alt, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') . '"' : '';
+        return '<img src="' . htmlspecialchars($src, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') . '"' . $safeAlt . ' style="max-width:100%; height:auto; display:block;">';
     }, (string) $html);
 
     $html = preg_replace("/\n{3,}/", "\n\n", (string) $html);
@@ -2271,6 +2422,83 @@ if (isset($_GET['email_worker']) && (string) $_GET['email_worker'] === '1') {
 
 vereisDashboardLogin();
 
+if (!empty($_GET['attachment'])) {
+    // US24: link om een bijlage te downloaden of (alleen bij plaatjes) in de browser te tonen.
+    // Dit draait in dezelfde sessie/login als het dashboard.
+    $messageId = isset($_GET['message_id']) ? trim((string) $_GET['message_id']) : '';
+    $attachmentId = isset($_GET['attachment_id']) ? trim((string) $_GET['attachment_id']) : '';
+    $filename = isset($_GET['filename']) ? trim((string) $_GET['filename']) : '';
+    $inline = !empty($_GET['inline']);
+
+    if ($messageId === '' || $attachmentId === '') {
+        http_response_code(400);
+        header('Content-Type: text/plain; charset=utf-8');
+        echo 'Ongeldige aanvraag.';
+        exit;
+    }
+
+    $token = haalGmailAccessTokenOp();
+    if (empty($token['ok'])) {
+        http_response_code(403);
+        header('Content-Type: text/plain; charset=utf-8');
+        echo 'Gmail is niet gekoppeld.';
+        exit;
+    }
+
+    $accessToken = (string) $token['access_token'];
+
+    $msg = gmailApiRequest('GET', 'users/me/messages/' . rawurlencode($messageId), $accessToken, null, ['format' => 'full']);
+    if (empty($msg['ok']) || !isset($msg['data']['payload']) || !is_array($msg['data']['payload'])) {
+        http_response_code(404);
+        header('Content-Type: text/plain; charset=utf-8');
+        echo 'Mail niet gevonden.';
+        exit;
+    }
+
+    $payload = $msg['data']['payload'];
+    $part = vindBijlagePartOpAttachmentId($payload, $attachmentId);
+
+    $mimeType = (is_array($part) && isset($part['mimeType']) && trim((string) $part['mimeType']) !== '') ? trim((string) $part['mimeType']) : 'application/octet-stream';
+    if ($filename === '' && is_array($part) && isset($part['filename']) && trim((string) $part['filename']) !== '') {
+        $filename = trim((string) $part['filename']);
+    }
+    if ($filename === '') {
+        $filename = 'bijlage';
+    }
+
+    $att = gmailApiRequest('GET', 'users/me/messages/' . rawurlencode($messageId) . '/attachments/' . rawurlencode($attachmentId), $accessToken);
+    if (empty($att['ok']) || !isset($att['data']['data']) || !is_string($att['data']['data'])) {
+        http_response_code(500);
+        header('Content-Type: text/plain; charset=utf-8');
+        echo 'Bijlage ophalen is mislukt.';
+        exit;
+    }
+
+    $bytes = base64UrlDecode((string) $att['data']['data']);
+    if (!is_string($bytes) || $bytes === '') {
+        http_response_code(500);
+        header('Content-Type: text/plain; charset=utf-8');
+        echo 'Bijlage ophalen is mislukt.';
+        exit;
+    }
+
+    // Veiligheidsregel: in de browser tonen mag alleen voor plaatjes.
+    $inlineOk = $inline && (preg_match('/^image\//i', $mimeType) === 1);
+
+    http_response_code(200);
+    header('X-Robots-Tag: noindex, nofollow', true);
+    header('Content-Type: ' . $mimeType);
+    $safe = preg_replace('/[^a-zA-Z0-9._\- ]+/', '_', (string) $filename);
+    $safe = trim((string) $safe);
+    if ($safe === '') {
+        $safe = 'bijlage';
+    }
+    header('Content-Disposition: ' . ($inlineOk ? 'inline' : 'attachment') . '; filename="' . $safe . '"');
+    header('Content-Length: ' . (string) strlen((string) $bytes));
+    echo $bytes;
+    exit;
+}
+
 $melding = null;
 $meldingType = 'ok';
 
@@ -3162,9 +3390,73 @@ if (!$concept) {
                 $from = (string) (haalHeaderOp($headers, 'From') ?? '');
                 $date = (string) (haalHeaderOp($headers, 'Date') ?? '');
 
+                $messageId = isset($m['id']) ? trim((string) $m['id']) : '';
+
+                // US24: bijlages pas laden als je de mail opent (detail).
+                // We maken hier alleen links/afbeelding-urls; de bytes komen via ?attachment=1.
+                $bijlageHtml = '';
+                $cidToUrl = [];
+                if ($messageId !== '') {
+                    $bijlages = haalBijlagesUitPayload($payload);
+                    if (is_array($bijlages) && !empty($bijlages)) {
+                        $btns = [];
+                        $imgs = [];
+                        foreach ($bijlages as $att) {
+                            if (!is_array($att)) {
+                                continue;
+                            }
+                            $attId = isset($att['attachmentId']) ? trim((string) $att['attachmentId']) : '';
+                            if ($attId === '') {
+                                continue;
+                            }
+                            $fn = isset($att['filename']) ? trim((string) $att['filename']) : '';
+                            $mt = isset($att['mimeType']) ? trim((string) $att['mimeType']) : '';
+                            $sz = isset($att['size']) ? (int) $att['size'] : 0;
+                            $cid = isset($att['contentId']) ? normaliseerContentId((string) $att['contentId']) : '';
+
+                            $label = $fn !== '' ? $fn : ($mt !== '' ? $mt : 'bijlage');
+                            $szText = formatteerBestandsgrootte($sz);
+                            if ($szText !== '') {
+                                $label .= ' (' . $szText . ')';
+                            }
+
+                            $isImage = ($mt !== '' && preg_match('/^image\//i', $mt) === 1);
+                            if ($isImage) {
+                                $u = emailDashboardAttachmentUrl($messageId, $attId, $fn, true);
+                                if ($cid !== '') {
+                                    // Afbeelding in de mail zelf gebruikt vaak cid:...
+                                    $cidToUrl[$cid] = $u;
+                                } else {
+                                    // Losse foto-bijlage: tonen we als <img> in het dashboard.
+                                    $imgs[] = '<img src="' . e($u) . '" alt="" style="max-width:100%; height:auto; display:block; margin-top:10px; border-radius:10px; border:1px solid #e5e7eb;">';
+                                }
+                            } else {
+                                $u = emailDashboardAttachmentUrl($messageId, $attId, $fn, false);
+                                $btns[] = '<a href="' . e($u) . '" style="display:inline-block; padding:8px 10px; border-radius:10px; border:1px solid #9ca3af; background:#e5e7eb; color:#111827; text-decoration:none; font-weight:800; font-size:12px;">Download: ' . e($label) . '</a>';
+                            }
+                        }
+
+                        if (!empty($btns) || !empty($imgs)) {
+                            $bijlageHtml = '<div style="background:#ffffff; border:1px dashed #e5e7eb; border-radius:12px; padding:10px 12px; margin-bottom:10px;">';
+                            $bijlageHtml .= '<div style="font-weight:800; font-size:12px; margin-bottom:8px;">Bijlagen</div>';
+                            if (!empty($btns)) {
+                                $bijlageHtml .= '<div style="display:flex; flex-wrap:wrap; gap:8px; margin-bottom:10px;">' . implode('', $btns) . '</div>';
+                            }
+                            if (!empty($imgs)) {
+                                $bijlageHtml .= implode('', $imgs);
+                            }
+                            $bijlageHtml .= '</div>';
+                        }
+                    }
+                }
+
                 $rawHtml = haalHtmlUitPayload($payload);
                 $bodyHtml = '';
                 if (is_string($rawHtml) && trim($rawHtml) !== '') {
+                    // Eerst cid: plaatjes vervangen door onze eigen link, daarna pas HTML schoonmaken.
+                    if (!empty($cidToUrl)) {
+                        $rawHtml = vervangCidSrcInHtml($rawHtml, $cidToUrl);
+                    }
                     $bodyHtml = sanitizeEmailHtmlVoorDashboard($rawHtml);
                 }
 
@@ -3193,7 +3485,7 @@ if (!$concept) {
                 if ($metaLine !== '') {
                     $b .= '<div style="color:#6b7280; font-size:12px; margin-top:2px;">' . $metaLine . '</div>';
                 }
-                $b .= '<div style="margin-top:10px;">' . $contentHtml . '</div>';
+                $b .= '<div style="margin-top:10px;">' . $bijlageHtml . $contentHtml . '</div>';
                 $b .= '</div>';
                 $blocks[] = $b;
             }
