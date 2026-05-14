@@ -3496,7 +3496,10 @@ if (!$concept) {
                                 if ($cid !== '') {
                                     // Afbeelding in de mail zelf gebruikt vaak cid:...
                                     $cidToUrl[$cid] = $u;
-                                    // Dit plaatje laten we in de mailtekst zien, dus niet nog een keer in "Bijlagen".
+                                    // Dit plaatje laten we in de mailtekst zien, maar we tonen wel een download-knop.
+                                    if ($dl !== '') {
+                                        $btns[] = '<a href="' . e($dl) . '" style="display:inline-block; padding:8px 10px; border-radius:10px; border:1px solid #9ca3af; background:#e5e7eb; color:#111827; text-decoration:none; font-weight:800; font-size:12px;">Download: ' . e($label) . '</a>';
+                                    }
                                     continue;
                                 }
                                 // Losse foto-bijlage: tonen we onder "Bijlagen" (los van de mailtekst).
