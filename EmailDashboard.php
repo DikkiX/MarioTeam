@@ -1227,7 +1227,8 @@ function sanitizeEmailHtmlVoorDashboard($html)
             $href = (string) ($hm[1] ?? '');
         }
 
-        $href = trim($href);
+        $href = html_entity_decode((string) $href, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+        $href = trim((string) $href);
         if ($href !== '' && preg_match('/^\s*javascript:/i', $href) === 1) {
             $href = '';
         }
@@ -1255,6 +1256,8 @@ function sanitizeEmailHtmlVoorDashboard($html)
             $alt = (string) ($am[1] ?? '');
         }
 
+        $src = html_entity_decode((string) $src, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+        $alt = html_entity_decode((string) $alt, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
         $src = trim((string) $src);
         $alt = trim((string) $alt);
 
