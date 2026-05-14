@@ -3477,7 +3477,6 @@ if (!$concept) {
                     $bijlages = haalBijlagesUitPayload($payload);
                     if (is_array($bijlages) && !empty($bijlages)) {
                         $btns = [];
-                        $imgs = [];
                         foreach ($bijlages as $att) {
                             if (!is_array($att)) {
                                 continue;
@@ -3520,25 +3519,24 @@ if (!$concept) {
                                 if ($cid !== '' && !isset($cidToUrl[$cid])) {
                                     $cidToUrl[$cid] = $u;
                                 }
-                                // Losse foto-bijlage: tonen we onder "Bijlagen" (los van de mailtekst).
-                                $imgs[] = '<div style="margin-top:10px;"><img src="' . e($u) . '" alt="" style="max-width:100%; height:auto; display:block; border-radius:10px; border:1px solid #e5e7eb;">' . ($dl !== '' ? '<div style="margin-top:6px;"><a href="' . e($dl) . '" style="display:inline-block; padding:8px 10px; border-radius:10px; border:1px solid #9ca3af; background:#e5e7eb; color:#111827; text-decoration:none; font-weight:800; font-size:12px;">Download: ' . e($label) . '</a></div>' : '') . '</div>';
+                                // Losse foto-bijlage: niet groot tonen (zoals Gmail). Alleen knoppen.
+                                if ($dl !== '') {
+                                    $btns[] = '<a href="' . e($dl) . '" style="display:inline-flex; align-items:center; gap:8px; padding:8px 10px; border-radius:10px; border:1px solid #9ca3af; background:#e5e7eb; color:#111827; text-decoration:none; font-weight:800; font-size:12px;"><span style="display:inline-flex; align-items:center; justify-content:center; width:22px; height:22px; border-radius:6px; border:1px solid #9ca3af; background:#f3f4f6; font-weight:900;">IMG</span> ' . e($label) . '</a>';
+                                }
                             } else {
                                 if ($attId === '') {
                                     continue;
                                 }
                                 $u = emailDashboardAttachmentUrl($messageId, $attId, $fn, false);
-                                $btns[] = '<a href="' . e($u) . '" style="display:inline-block; padding:8px 10px; border-radius:10px; border:1px solid #9ca3af; background:#e5e7eb; color:#111827; text-decoration:none; font-weight:800; font-size:12px;">Download: ' . e($label) . '</a>';
+                                $btns[] = '<a href="' . e($u) . '" style="display:inline-flex; align-items:center; gap:8px; padding:8px 10px; border-radius:10px; border:1px solid #9ca3af; background:#e5e7eb; color:#111827; text-decoration:none; font-weight:800; font-size:12px;"><span style="display:inline-flex; align-items:center; justify-content:center; width:22px; height:22px; border-radius:6px; border:1px solid #9ca3af; background:#f3f4f6; font-weight:900;">DOC</span> ' . e($label) . '</a>';
                             }
                         }
 
-                        if (!empty($btns) || !empty($imgs)) {
+                        if (!empty($btns)) {
                             $bijlageHtml = '<div style="background:#ffffff; border:1px dashed #e5e7eb; border-radius:12px; padding:10px 12px; margin-bottom:10px;">';
                             $bijlageHtml .= '<div style="font-weight:800; font-size:12px; margin-bottom:8px;">Bijlagen</div>';
                             if (!empty($btns)) {
                                 $bijlageHtml .= '<div style="display:flex; flex-wrap:wrap; gap:8px; margin-bottom:10px;">' . implode('', $btns) . '</div>';
-                            }
-                            if (!empty($imgs)) {
-                                $bijlageHtml .= implode('', $imgs);
                             }
                             $bijlageHtml .= '</div>';
                         }
