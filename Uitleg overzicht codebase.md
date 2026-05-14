@@ -116,11 +116,11 @@ Code-links in dit document zijn relatief (werken in GitHub én als je de repo lo
 - Doel:
   - Bijlagen kunnen downloaden en afbeeldingen meteen zien, zonder Gmail te openen.
 - Waar in de code:
-  - Bijlages in een mail vinden: [haalBijlagesUitPayload](EmailDashboard.php#L647) (loopt door de mail “parts” heen).
-  - `cid:` plaatjes in HTML fixen: [vervangCidSrcInHtml](EmailDashboard.php#L688)
-  - HTML schoonmaken (veilig) en `<img>` toelaten: [sanitizeEmailHtmlVoorDashboard](EmailDashboard.php#L1153)
-  - Bijlage ophalen/downloaden (aparte URL): [attachment endpoint](EmailDashboard.php#L2425)
-  - Bijlagen tonen in “Gespreksgeschiedenis”: [thread render](EmailDashboard.php#L3392)
+  - Bijlages in een mail vinden: [haalBijlagesUitPayload](EmailDashboard.php#L651) (loopt door de mail “parts” heen).
+  - `cid:` plaatjes in HTML fixen: [vervangCidSrcInHtml](EmailDashboard.php#L733)
+  - HTML schoonmaken (veilig) en `<img>` toelaten: [sanitizeEmailHtmlVoorDashboard](EmailDashboard.php#L1198)
+  - Bijlage ophalen/downloaden (aparte URL): [attachment endpoint](EmailDashboard.php#L2470)
+  - Bijlagen tonen in “Gespreksgeschiedenis”: [thread render](EmailDashboard.php#L3450)
 - Hoe het werkt (simpel):
   - Als je een concept opent, bouwen we download-links en `<img>` tags.
   - Pas als je klikt (of als een `<img>` laadt), haalt het dashboard de bijlage op via die endpoint.
