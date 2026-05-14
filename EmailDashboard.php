@@ -3493,8 +3493,10 @@ if (!$concept) {
                                 if ($cid !== '') {
                                     // Afbeelding in de mail zelf gebruikt vaak cid:...
                                     $cidToUrl[$cid] = $u;
+                                    // Dit plaatje laten we in de mailtekst zien, dus niet nog een keer in "Bijlagen".
+                                    continue;
                                 }
-                                // Afbeeldingen tonen we altijd ook in het bijlageblok (ook als hij inline in HTML zit).
+                                // Losse foto-bijlage: tonen we onder "Bijlagen" (los van de mailtekst).
                                 $imgs[] = '<div style="margin-top:10px;"><img src="' . e($u) . '" alt="" style="max-width:100%; height:auto; display:block; border-radius:10px; border:1px solid #e5e7eb;">' . ($dl !== '' ? '<div style="margin-top:6px;"><a href="' . e($dl) . '" style="display:inline-block; padding:8px 10px; border-radius:10px; border:1px solid #9ca3af; background:#e5e7eb; color:#111827; text-decoration:none; font-weight:800; font-size:12px;">Download: ' . e($label) . '</a></div>' : '') . '</div>';
                             } else {
                                 if ($attId === '') {
@@ -3554,7 +3556,7 @@ if (!$concept) {
                 if ($metaLine !== '') {
                     $b .= '<div style="color:#6b7280; font-size:12px; margin-top:2px;">' . $metaLine . '</div>';
                 }
-                $b .= '<div style="margin-top:10px;">' . $bijlageHtml . $contentHtml . '</div>';
+                $b .= '<div style="margin-top:10px;">' . $contentHtml . $bijlageHtml . '</div>';
                 $b .= '</div>';
                 $blocks[] = $b;
             }
