@@ -119,12 +119,12 @@ Code-links in dit document zijn relatief (werken in GitHub én als je de repo lo
   - Bijlages in een mail vinden: [haalBijlagesUitPayload](EmailDashboard.php#L651) (loopt door de mail “parts” heen).
   - `cid:` plaatjes in HTML fixen: [vervangCidSrcInHtml](EmailDashboard.php#L733)
   - HTML schoonmaken (veilig) en `<img>` toelaten: [sanitizeEmailHtmlVoorDashboard](EmailDashboard.php#L1198)
-  - Bijlage ophalen/downloaden (aparte URL): [attachment endpoint](EmailDashboard.php#L2470)
-  - Bijlagen tonen in “Gespreksgeschiedenis”: [thread render](EmailDashboard.php#L3450)
+  - Bijlage ophalen/downloaden (aparte URL): [attachment endpoint](EmailDashboard.php#L2473)
+  - Bijlagen tonen in “Gespreksgeschiedenis”: [thread render](EmailDashboard.php#L3453)
 - Hoe het werkt (simpel):
-  - Als je een concept opent, bouwen we download-links en `<img>` tags.
-  - Pas als je klikt (of als een `<img>` laadt), haalt het dashboard de bijlage op via die endpoint.
-  - Grote foto’s blijven binnen de breedte van het scherm door inline CSS.
+  - Inline plaatjes (die in de mailtekst staan) worden in de tekst getoond, net als Gmail.
+  - Losse bijlages blijven compact: je ziet een “documentje/knop” met naam + grootte, en je kunt downloaden.
+  - De bijlage bytes worden pas opgehaald als je klikt (of als een inline plaatje laadt).
 
 ### OpenAI call voor e-mailconcepten
 - Functie:

@@ -3453,7 +3453,7 @@ if (!$concept) {
                 $messageId = isset($m['id']) ? trim((string) $m['id']) : '';
 
                 // US24: bijlages pas laden als je de mail opent (detail).
-                // We maken hier alleen links/afbeelding-urls; de bytes komen via ?attachment=1.
+                // We maken hier alleen links (en voor inline plaatjes een URL); de bytes komen via ?attachment=1.
                 $bijlageHtml = '';
                 $cidToUrl = [];
                 $rawHtml = haalHtmlUitPayload($payload);
