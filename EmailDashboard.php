@@ -3456,6 +3456,23 @@ if (!$concept) {
                 // We maken hier alleen links/afbeelding-urls; de bytes komen via ?attachment=1.
                 $bijlageHtml = '';
                 $cidToUrl = [];
+                $rawHtml = haalHtmlUitPayload($payload);
+                $cidsInHtml = [];
+                if (is_string($rawHtml) && trim($rawHtml) !== '') {
+                    if (preg_match_all('/cid:([^"\'>\s]+)/i', (string) $rawHtml, $cm) > 0) {
+                        $found = $cm[1] ?? [];
+                        if (is_array($found)) {
+                            foreach ($found as $c) {
+                                $cidClean = normaliseerContentId((string) $c);
+                                if ($cidClean !== '') {
+                                    $cidsInHtml[$cidClean] = true;
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    $rawHtml = null;
+                }
                 if ($messageId !== '') {
                     $bijlages = haalBijlagesUitPayload($payload);
                     if (is_array($bijlages) && !empty($bijlages)) {
@@ -3493,7 +3510,8 @@ if (!$concept) {
                                 if ($u === '') {
                                     continue;
                                 }
-                                if ($cid !== '') {
+                                $cidIsUsedInHtml = ($cid !== '' && isset($cidsInHtml[$cid]));
+                                if ($cidIsUsedInHtml) {
                                     // Afbeelding in de mail zelf gebruikt vaak cid:...
                                     $cidToUrl[$cid] = $u;
                                     // Dit plaatje laten we in de mailtekst zien, maar we tonen wel een download-knop.
@@ -3501,6 +3519,9 @@ if (!$concept) {
                                         $btns[] = '<a href="' . e($dl) . '" style="display:inline-block; padding:8px 10px; border-radius:10px; border:1px solid #9ca3af; background:#e5e7eb; color:#111827; text-decoration:none; font-weight:800; font-size:12px;">Download: ' . e($label) . '</a>';
                                     }
                                     continue;
+                                }
+                                if ($cid !== '' && !isset($cidToUrl[$cid])) {
+                                    $cidToUrl[$cid] = $u;
                                 }
                                 // Losse foto-bijlage: tonen we onder "Bijlagen" (los van de mailtekst).
                                 $imgs[] = '<div style="margin-top:10px;"><img src="' . e($u) . '" alt="" style="max-width:100%; height:auto; display:block; border-radius:10px; border:1px solid #e5e7eb;">' . ($dl !== '' ? '<div style="margin-top:6px;"><a href="' . e($dl) . '" style="display:inline-block; padding:8px 10px; border-radius:10px; border:1px solid #9ca3af; background:#e5e7eb; color:#111827; text-decoration:none; font-weight:800; font-size:12px;">Download: ' . e($label) . '</a></div>' : '') . '</div>';
@@ -3527,7 +3548,6 @@ if (!$concept) {
                     }
                 }
 
-                $rawHtml = haalHtmlUitPayload($payload);
                 $bodyHtml = '';
                 if (is_string($rawHtml) && trim($rawHtml) !== '') {
                     // Eerst cid: plaatjes vervangen door onze eigen link, daarna pas HTML schoonmaken.
