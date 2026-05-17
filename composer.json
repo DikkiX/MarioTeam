@@ -1,0 +1,10 @@
+{
+  "name": "marioteam/marioswitch1nl",
+  "type": "project",
+  "require-dev": {
+    "phpunit/phpunit": "^11.5"
+  },
+  "config": {
+    "sort-packages": true
+  }
+}

@@ -7,3 +7,6 @@ docs/
 Afstudeeropdracht Mario Wii.nl.pdf
 storage/logs/*.log
 storage/google/*.json
+vendor/
+.phpunit.cache/
+coverage.xml

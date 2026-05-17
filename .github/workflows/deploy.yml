@@ -30,6 +30,8 @@ jobs:
         uses: shivammathur/setup-php@v2
         with:
           php-version: '8.2'
+          tools: composer:v2
+          coverage: pcov
 
       # 3) PHP lint: stopt de workflow als er een syntax error in een .php bestand zit.
       # Als deze stap faalt, wordt de deploy/upload stap hieronder automatisch niet uitgevoerd.
@@ -58,13 +60,25 @@ jobs:
             exit 1
           fi
 
-      # 4) Deploy dependencies.
+      # 4) Unit tests + coverage.
+      - name: Composer Install (dev)
+        run: |
+          set -euo pipefail
+          composer --version
+          composer install --no-interaction --prefer-dist --no-progress
+
+      - name: Unit Tests (PHPUnit) + Coverage
+        run: |
+          set -euo pipefail
+          vendor/bin/phpunit --coverage-text --coverage-clover=coverage.xml
+
+      # 5) Deploy dependencies.
       - name: Lftp Installeren
         run: |
           sudo apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 -o Acquire::ForceIPv4=true update
           sudo apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 -o Acquire::ForceIPv4=true install -y lftp
 
-      # 5) Upload de repo naar de server via SFTP.
+      # 6) Upload de repo naar de server via SFTP.
       - name: Bestanden Via SFTP Uploaden
         env:
           FTP_SERVER: ${{ secrets.FTP_SERVER }}
