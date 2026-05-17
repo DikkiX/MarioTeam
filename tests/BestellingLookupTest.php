@@ -330,4 +330,69 @@ final class EmailDashboardHelpersTest extends TestCase
         $this->assertSame(999, $r2['bestelling_id']);
         $this->assertSame('', $r2['email']);
     }
+
+    public function testNormaliseerTekst(): void
+    {
+        $t = "a\r\n\r\n\r\nb\r\n\r\n\r\n\r\nc\r\nd";
+        $this->assertSame("a\n\nb\n\nc\nd", normaliseerTekst($t));
+    }
+
+    public function testStripQuotedEnHandtekeningTekst(): void
+    {
+        $t1 = "Hallo\n\nMet vriendelijke groet,\nTest";
+        $this->assertSame('Hallo', stripQuotedEnHandtekeningTekst($t1));
+
+        $t2 = "Vraag\n\nOn Mon, someone wrote:\n> oude tekst\n> nog meer";
+        $this->assertSame('Vraag', stripQuotedEnHandtekeningTekst($t2));
+
+        $t3 = "Nieuwe vraag\n> quote 1\n> quote 2\n\nGroeten,\nX";
+        $this->assertSame('Nieuwe vraag', stripQuotedEnHandtekeningTekst($t3));
+    }
+
+    public function testParseerEmailAdresUitFromHeader(): void
+    {
+        $this->assertSame('Test@Example.com', parseerEmailAdresUitFromHeader('Naam <Test@Example.com>'));
+        $this->assertSame('', parseerEmailAdresUitFromHeader('Geen email hier'));
+    }
+
+    public function testParseerEmailAdressenUitHeaderTekst(): void
+    {
+        $header = 'A <A@EXAMPLE.com>, B <b@example.com>, a@example.com';
+        $emails = parseerEmailAdressenUitHeaderTekst($header);
+        $this->assertSame(['a@example.com', 'b@example.com'], $emails);
+
+        $fallback = parseerEmailAdressenUitHeaderTekst('Naam <Test@Example.com>');
+        $this->assertSame(['test@example.com'], $fallback);
+    }
+
+    public function testHaalHeaderOp(): void
+    {
+        $headers = [
+            ['name' => 'From', 'value' => 'A <a@example.com>'],
+            ['name' => 'Subject', 'value' => 'Hoi'],
+        ];
+        $this->assertSame('Hoi', haalHeaderOp($headers, 'Subject'));
+        $this->assertSame('Hoi', haalHeaderOp($headers, 'subject'));
+        $this->assertNull(haalHeaderOp($headers, 'Date'));
+    }
+
+    public function testBouwRfc2822Bericht(): void
+    {
+        $rawB64 = bouwRfc2822Bericht(
+            'to@example.com',
+            'Onderwerp',
+            "Body regel 1\nBody regel 2",
+            '<inreplyto@test>',
+            '<ref1@test> <ref2@test>',
+            'From Name <from@example.com>'
+        );
+        $decoded = base64UrlDecode($rawB64);
+
+        $this->assertStringContainsString("From: From Name <from@example.com>\r\n", $decoded);
+        $this->assertStringContainsString("To: to@example.com\r\n", $decoded);
+        $this->assertStringContainsString("Subject: Onderwerp\r\n", $decoded);
+        $this->assertStringContainsString("In-Reply-To: <inreplyto@test>\r\n", $decoded);
+        $this->assertStringContainsString("References: <ref1@test> <ref2@test>\r\n", $decoded);
+        $this->assertStringContainsString("\r\n\r\nBody regel 1\nBody regel 2", $decoded);
+    }
 }
