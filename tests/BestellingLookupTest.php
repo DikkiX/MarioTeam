@@ -2,6 +2,11 @@
 
 use PHPUnit\Framework\TestCase;
 
+if (!defined('EMAIL_DASHBOARD_LIB_ONLY')) {
+    define('EMAIL_DASHBOARD_LIB_ONLY', true);
+}
+
+require_once __DIR__ . '/../EmailDashboard.php';
 require_once __DIR__ . '/../include/bestelling_lookup.php';
 
 // Fake DB laag voor unit tests:
@@ -183,5 +188,146 @@ final class BestellingLookupTest extends TestCase
         $this->assertSame('zoek_bestelling', $result['functie']);
         $this->assertFalse($result['gevonden']);
         $this->assertSame('Order lookup is nu niet beschikbaar.', $result['message']);
+    }
+}
+
+final class EmailDashboardHelpersTest extends TestCase
+{
+    public function testFormatteerBestandsgrootte(): void
+    {
+        $this->assertSame('', formatteerBestandsgrootte(0));
+        $this->assertSame('500 B', formatteerBestandsgrootte(500));
+        $this->assertSame('1,0 KB', formatteerBestandsgrootte(1024));
+        $this->assertSame('1,0 MB', formatteerBestandsgrootte(1024 * 1024));
+    }
+
+    public function testNormaliseerContentId(): void
+    {
+        $this->assertSame('', normaliseerContentId(''));
+        $this->assertSame('abc', normaliseerContentId('<abc>'));
+        $this->assertSame('abc', normaliseerContentId('  abc  '));
+        $this->assertSame('a@b', normaliseerContentId("<a@b>\n"));
+    }
+
+    public function testBase64UrlDecode(): void
+    {
+        $raw = 'hello world!';
+        $b64 = base64_encode($raw);
+        $url = rtrim(strtr($b64, '+/', '-_'), '=');
+
+        $this->assertSame($raw, base64UrlDecode($url));
+        $this->assertSame('', base64UrlDecode('@@@'));
+    }
+
+    public function testHaalBijlagesUitPayloadFindsAttachmentsAndInlineParts(): void
+    {
+        $payload = [
+            'mimeType' => 'multipart/mixed',
+            'parts' => [
+                [
+                    'mimeType' => 'text/plain',
+                    'filename' => '',
+                    'body' => ['size' => 10],
+                ],
+                [
+                    'mimeType' => 'image/jpeg',
+                    'filename' => '',
+                    'headers' => [
+                        ['name' => 'Content-ID', 'value' => '<img1>'],
+                        ['name' => 'Content-Disposition', 'value' => 'inline'],
+                    ],
+                    'body' => [
+                        'size' => 123,
+                        'data' => 'aGVsbG8',
+                    ],
+                ],
+                [
+                    'mimeType' => 'application/pdf',
+                    'filename' => 'factuur.pdf',
+                    'headers' => [
+                        ['name' => 'Content-Disposition', 'value' => 'attachment'],
+                    ],
+                    'body' => [
+                        'attachmentId' => 'att-123',
+                        'size' => 999,
+                    ],
+                ],
+            ],
+        ];
+
+        $bijlages = haalBijlagesUitPayload($payload);
+        $this->assertCount(2, $bijlages);
+
+        $this->assertSame('image/jpeg', $bijlages[0]['mimeType']);
+        $this->assertSame('img1', $bijlages[0]['contentId']);
+        $this->assertSame('1', $bijlages[0]['partPath']);
+        $this->assertTrue($bijlages[0]['hasInlineData']);
+
+        $this->assertSame('factuur.pdf', $bijlages[1]['filename']);
+        $this->assertSame('att-123', $bijlages[1]['attachmentId']);
+        $this->assertSame('2', $bijlages[1]['partPath']);
+    }
+
+    public function testVindBijlagePartOpPad(): void
+    {
+        $payload = [
+            'mimeType' => 'multipart/mixed',
+            'parts' => [
+                ['mimeType' => 'text/plain'],
+                [
+                    'mimeType' => 'multipart/related',
+                    'parts' => [
+                        ['mimeType' => 'image/png', 'body' => ['data' => 'aGVsbG8']],
+                    ],
+                ],
+            ],
+        ];
+
+        $part = vindBijlagePartOpPad($payload, '1.0');
+        $this->assertIsArray($part);
+        $this->assertSame('image/png', $part['mimeType']);
+        $this->assertNull(vindBijlagePartOpPad($payload, ''));
+        $this->assertNull(vindBijlagePartOpPad($payload, 'abc'));
+        $this->assertNull(vindBijlagePartOpPad($payload, '9'));
+    }
+
+    public function testVervangCidSrcInHtml(): void
+    {
+        $html = '<p>Hi</p><img src="cid:img1">';
+        $out = vervangCidSrcInHtml($html, ['img1' => '/EmailDashboard.php?attachment=1&message_id=x&attachment_id=y&inline=1']);
+        $this->assertStringContainsString('src="/EmailDashboard.php?attachment=1&amp;message_id=x&amp;attachment_id=y&amp;inline=1"', $out);
+
+        $out2 = vervangCidSrcInHtml('<img src="cid:unknown">', ['img1' => '/EmailDashboard.php?attachment=1']);
+        $this->assertSame('<img src="">', $out2);
+    }
+
+    public function testSanitizeEmailHtmlVoorDashboardRemovesScriptsAndExternalImages(): void
+    {
+        $html = '<div onclick="alert(1)"><script>alert(1)</script><a href="javascript:alert(1)">x</a>'
+            . '<a href="https://example.com">ok</a>'
+            . '<img src="https://evil.com/x.png" alt="x">'
+            . '<img src="/EmailDashboard.php?attachment=1&amp;message_id=1&amp;attachment_id=2&amp;inline=1" alt="test">'
+            . '</div>';
+
+        $out = sanitizeEmailHtmlVoorDashboard($html);
+        $this->assertStringNotContainsString('<script', $out);
+        $this->assertStringNotContainsString('onclick=', $out);
+        $this->assertStringNotContainsString('javascript:', $out);
+        $this->assertStringNotContainsString('evil.com', $out);
+        $this->assertStringContainsString('href="https://example.com"', $out);
+        $this->assertStringContainsString('<img src="/EmailDashboard.php?attachment=1&amp;message_id=1&amp;attachment_id=2&amp;inline=1"', $out);
+    }
+
+    public function testExtracteerBestelEnEmailUitTekst(): void
+    {
+        $t = "Hoi, mijn bestelnummer is 12345 en mijn email is Test@Example.com";
+        $r = extracteerBestelEnEmailUitTekst($t);
+        $this->assertSame(12345, $r['bestelling_id']);
+        $this->assertSame('test@example.com', $r['email']);
+
+        $t2 = "Order: 999\ngeen email erbij";
+        $r2 = extracteerBestelEnEmailUitTekst($t2);
+        $this->assertSame(999, $r2['bestelling_id']);
+        $this->assertSame('', $r2['email']);
     }
 }
