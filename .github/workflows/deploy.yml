@@ -111,3 +111,46 @@ jobs:
             ./ "$DOELMAP"
           bye
           EOF
+
+      # 7) Smoke check: check of de belangrijkste pagina's/endpoints reageren na de upload.
+      # We doen expres "lichte" checks (geen echte chat aanmaken, geen Gmail calls), alleen: leeft PHP + DB + routing?
+      - name: Smoke Check (site + API)
+        env:
+          SITE_BASE_URL: ${{ vars.SITE_BASE_URL }}
+        run: |
+          set -euo pipefail
+
+          BASE_URL="${SITE_BASE_URL:-https://www.marioswitch1.nl}"
+          BASE_URL="${BASE_URL%/}"
+
+          echo "Smoke check base url: $BASE_URL"
+          echo ""
+
+          check_code() {
+            local label="$1"
+            local code="$2"
+            local expected="$3"
+
+            if [ "$code" = "$expected" ]; then
+              echo "OK   $label ($code)"
+              return 0
+            fi
+
+            echo "FAIL $label (got $code, expected $expected)"
+            return 1
+          }
+
+          # Kleine wachttijd zodat de hosting de nieuwe files zeker "ziet".
+          sleep 3
+
+          # 1) Frontend pagina leeft
+          code="$(curl -sS -o /dev/null -w "%{http_code}" --max-time 20 "$BASE_URL/ChatBotMrM.php")"
+          check_code "ChatBotMrM.php" "$code" "200"
+
+          # 2) API status endpoint leeft (zonder params hoort dit 422 te geven)
+          code="$(curl -sS -o /dev/null -w "%{http_code}" --max-time 20 "$BASE_URL/api/chat/status.php")"
+          check_code "api/chat/status.php (no params)" "$code" "422"
+
+          # 3) API send endpoint leeft (POST zonder body hoort dit 400 te geven)
+          code="$(curl -sS -o /dev/null -w "%{http_code}" --max-time 20 -X POST "$BASE_URL/api/chat/send.php")"
+          check_code "api/chat/send.php (empty POST)" "$code" "400"
