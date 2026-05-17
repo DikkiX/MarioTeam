@@ -193,6 +193,7 @@ Code-links in dit document zijn relatief (werken in GitHub én als je de repo lo
   - Composer deps: [composer.json](composer.json)
   - PHPUnit config (incl. coverage selectie): [phpunit.xml](phpunit.xml)
   - Tests: [BestellingLookupTest.php](tests/BestellingLookupTest.php)
+  - Test-lijst bekijken: `vendor/bin/phpunit --list-tests`
 - Coverage (simpel):
   - Coverage laat zien welke regels code door de tests worden uitgevoerd.
   - Alleen de bestanden die in `phpunit.xml` staan tellen mee.

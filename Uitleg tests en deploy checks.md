@@ -49,13 +49,26 @@ Test bestand: [tests/BestellingLookupTest.php](tests/BestellingLookupTest.php)
 
 2) EmailDashboard helpers (`include/email_dashboard_helpers.php`)
 - Helpers die je kunt testen zonder Gmail of login, zoals:
-  - bestandsgrootte tonen (`formatteerBestandsgrootte`)
-  - content-id opschonen (`normaliseerContentId`)
-  - base64url decode (`base64UrlDecode`)
-  - bijlages uit payload halen (`haalBijlagesUitPayload`)
-  - cid links vervangen (`vervangCidSrcInHtml`)
-  - HTML veilig maken (`sanitizeEmailHtmlVoorDashboard`)
-  - bestelnummer/email uit tekst halen (`extracteerBestelEnEmailUitTekst`)
+  - `formatteerBestandsgrootte`: zet bytes om naar tekst zoals `500 B`, `1,0 KB`, `1,5 MB`.
+  - `normaliseerContentId`: haalt `<` en `>` weg uit een Content-ID, zodat `cid:` links matchen.
+  - `base64UrlDecode`: decodeert Gmail base64url (Gmail gebruikt `-` en `_` i.p.v. `+` en `/`).
+  - `haalBijlagesUitPayload`: loopt door Gmail “parts” heen en geeft een platte lijst met bijlages/inline parts terug.
+  - `emailDashboardAttachmentUrl`: bouwt een dashboard-URL om een bijlage op te halen via `?attachment=1&attachment_id=...`.
+  - `emailDashboardInlinePartUrl`: bouwt een dashboard-URL om een inline part op te halen via `?attachment=1&part_path=...`.
+  - `vervangCidSrcInHtml`: vervangt `<img src="cid:...">` door een dashboard-URL, zodat plaatjes in het dashboard werken.
+  - `zoekTekstPlainInPayload`: zoekt `text/plain` in een Gmail payload en geeft de gedecodeerde tekst terug.
+  - `zoekTekstHtmlInPayload`: zoekt `text/html` en zet HTML om naar normale tekst (voor “plain text” weergave).
+  - `haalHtmlUitPayload`: haalt de ruwe HTML uit `text/html` (dus zonder omzetten naar tekst).
+  - `sanitizeEmailHtmlVoorDashboard`: maakt mail-HTML veilig (geen scripts, geen externe plaatjes, rare attributes weg).
+  - `extracteerBestelEnEmailUitTekst`: zoekt een bestelnummer + e-mailadres uit vrije tekst (voor de order lookup).
+  - `haalHeaderOp`: zoekt één headerwaarde op uit de Gmail headers-lijst (case-insensitive).
+  - `parseerEmailAdresUitFromHeader`: haalt 1 e-mailadres uit een `From:` regel.
+  - `parseerEmailAdressenUitHeaderTekst`: haalt meerdere e-mailadressen uit `To/Cc/...` headertekst.
+  - `bouwRfc2822Bericht`: bouwt een mailbericht (headers + body) en encodeert dat naar base64url voor Gmail send.
+  - `verwerkEmailRulesVoorMail`: past rules toe (bijv. “ignore” of extra instructies) op basis van afzender/onderwerp.
+
+Welke tests er exact draaien is makkelijk te zien met:
+- `vendor/bin/phpunit --list-tests`
 
 ## Wat coverage betekent
 
