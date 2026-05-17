@@ -12,8 +12,18 @@
 	<br><br>
 
 	<?php
-	include_once $_SERVER['DOCUMENT_ROOT'] . "/include/db.inc";
 	error_reporting(-1); //show errors	
+	ini_set('display_errors', '1');
+	ini_set('display_startup_errors', '1');
+
+	$documentRoot = rtrim((string) ($_SERVER['DOCUMENT_ROOT'] ?? ''), '/');
+	$dbIncludePath = $documentRoot !== '' ? ($documentRoot . '/include/db.inc') : (__DIR__ . '/include/db.inc');
+	include_once $dbIncludePath;
+
+	if (!isset($conn)) {
+		echo 'Geen database connectie ($conn).';
+		exit;
+	}
 
 	$sthSELECT = $conn->prepare("SELECT * FROM chatHistory");
 	$i = 0;
@@ -24,7 +34,7 @@
 			$i++;
 		}
 	}
-	echo 'Aantal chats in db.chatHistry: ' . $i;
+	echo 'Aantal chats in db.chatHistory: ' . $i;
 	?>
 </body>
 
