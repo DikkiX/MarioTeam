@@ -189,16 +189,15 @@ final class BestellingLookupTest extends TestCase
         $this->assertFalse($result['gevonden']);
         $this->assertSame('Order lookup is nu niet beschikbaar.', $result['message']);
     }
-}
-
-final class EmailDashboardHelpersTest extends TestCase
-{
     public function testFormatteerBestandsgrootte(): void
     {
         $this->assertSame('', formatteerBestandsgrootte(0));
+        $this->assertSame('', formatteerBestandsgrootte(-5));
+        $this->assertSame('500 B', formatteerBestandsgrootte(500));
         $this->assertSame('500 B', formatteerBestandsgrootte(500));
         $this->assertSame('1,0 KB', formatteerBestandsgrootte(1024));
         $this->assertSame('1,0 MB', formatteerBestandsgrootte(1024 * 1024));
+        $this->assertSame('1,5 MB', formatteerBestandsgrootte((int) (1.5 * 1024 * 1024)));
     }
 
     public function testNormaliseerContentId(): void
@@ -207,6 +206,7 @@ final class EmailDashboardHelpersTest extends TestCase
         $this->assertSame('abc', normaliseerContentId('<abc>'));
         $this->assertSame('abc', normaliseerContentId('  abc  '));
         $this->assertSame('a@b', normaliseerContentId("<a@b>\n"));
+        $this->assertSame('', normaliseerContentId('<>'));
     }
 
     public function testBase64UrlDecode(): void
@@ -217,6 +217,7 @@ final class EmailDashboardHelpersTest extends TestCase
 
         $this->assertSame($raw, base64UrlDecode($url));
         $this->assertSame('', base64UrlDecode('@@@'));
+        $this->assertSame('hi', base64UrlDecode('aGk'));
     }
 
     public function testHaalBijlagesUitPayloadFindsAttachmentsAndInlineParts(): void
@@ -291,6 +292,21 @@ final class EmailDashboardHelpersTest extends TestCase
         $this->assertNull(vindBijlagePartOpPad($payload, '9'));
     }
 
+    public function testEmailDashboardUrls(): void
+    {
+        $u1 = emailDashboardAttachmentUrl('m1', 'a1', 'x y.pdf', false);
+        $this->assertSame('/EmailDashboard.php?attachment=1&message_id=m1&attachment_id=a1&filename=x+y.pdf&download=1', $u1);
+
+        $u2 = emailDashboardAttachmentUrl('m1', 'a1', '', true);
+        $this->assertSame('/EmailDashboard.php?attachment=1&message_id=m1&attachment_id=a1&inline=1', $u2);
+
+        $u3 = emailDashboardInlinePartUrl('m1', '1.0', 'img.png', true);
+        $this->assertSame('/EmailDashboard.php?attachment=1&message_id=m1&part_path=1.0&filename=img.png&inline=1', $u3);
+
+        $u4 = emailDashboardInlinePartUrl('m1', '1.0', '', false);
+        $this->assertSame('/EmailDashboard.php?attachment=1&message_id=m1&part_path=1.0&download=1', $u4);
+    }
+
     public function testVervangCidSrcInHtml(): void
     {
         $html = '<p>Hi</p><img src="cid:img1">';
@@ -299,6 +315,9 @@ final class EmailDashboardHelpersTest extends TestCase
 
         $out2 = vervangCidSrcInHtml('<img src="cid:unknown">', ['img1' => '/EmailDashboard.php?attachment=1']);
         $this->assertSame('<img src="">', $out2);
+
+        $out3 = vervangCidSrcInHtml('<img src="cid:img1">', []);
+        $this->assertSame('<img src="cid:img1">', $out3);
     }
 
     public function testSanitizeEmailHtmlVoorDashboardRemovesScriptsAndExternalImages(): void
@@ -318,6 +337,27 @@ final class EmailDashboardHelpersTest extends TestCase
         $this->assertStringContainsString('<img src="/EmailDashboard.php?attachment=1&amp;message_id=1&amp;attachment_id=2&amp;inline=1"', $out);
     }
 
+    public function testSanitizeEmailHtmlVoorDashboardCleansAttributesAndLinks(): void
+    {
+        $html = '<meta charset="utf-8"><link rel="x" href="y">'
+            . '<div class="c" style="color:red" onload=alert(1)>'
+            . '<a>nohref</a>'
+            . '<a href="">empty</a>'
+            . '<a href=" javascript:alert(1) ">bad</a>'
+            . '<img alt="x">'
+            . '</div>';
+
+        $out = sanitizeEmailHtmlVoorDashboard($html);
+        $this->assertStringNotContainsString('<meta', $out);
+        $this->assertStringNotContainsString('<link', $out);
+        $this->assertStringNotContainsString('class=', $out);
+        $this->assertStringNotContainsString('style=', $out);
+        $this->assertStringNotContainsString('onload', $out);
+        $this->assertStringContainsString('<a>', $out);
+        $this->assertStringNotContainsString('javascript:', $out);
+        $this->assertStringNotContainsString('<img', $out);
+    }
+
     public function testExtracteerBestelEnEmailUitTekst(): void
     {
         $t = "Hoi, mijn bestelnummer is 12345 en mijn email is Test@Example.com";
@@ -329,6 +369,14 @@ final class EmailDashboardHelpersTest extends TestCase
         $r2 = extracteerBestelEnEmailUitTekst($t2);
         $this->assertSame(999, $r2['bestelling_id']);
         $this->assertSame('', $r2['email']);
+
+        $t3 = "Mijn bestelling is kapot. Nummer staat hieronder:\nref 77\nbestelling\n  444";
+        $r3 = extracteerBestelEnEmailUitTekst($t3);
+        $this->assertSame(444, $r3['bestelling_id']);
+
+        $t4 = "Hier staat wel een nummer 333 maar geen keyword.";
+        $r4 = extracteerBestelEnEmailUitTekst($t4);
+        $this->assertSame(0, $r4['bestelling_id']);
     }
 
     public function testNormaliseerTekst(): void
@@ -347,6 +395,12 @@ final class EmailDashboardHelpersTest extends TestCase
 
         $t3 = "Nieuwe vraag\n> quote 1\n> quote 2\n\nGroeten,\nX";
         $this->assertSame('Nieuwe vraag', stripQuotedEnHandtekeningTekst($t3));
+
+        $t4 = "Nieuw\n\nVan: A\nVerzonden: B\nAan: C\nOnderwerp: D\n\nOud";
+        $this->assertSame('Nieuw', stripQuotedEnHandtekeningTekst($t4));
+
+        $t5 = "Top\n\n-- \nSig";
+        $this->assertSame('Top', stripQuotedEnHandtekeningTekst($t5));
     }
 
     public function testParseerEmailAdresUitFromHeader(): void
@@ -374,6 +428,8 @@ final class EmailDashboardHelpersTest extends TestCase
         $this->assertSame('Hoi', haalHeaderOp($headers, 'Subject'));
         $this->assertSame('Hoi', haalHeaderOp($headers, 'subject'));
         $this->assertNull(haalHeaderOp($headers, 'Date'));
+        $this->assertNull(haalHeaderOp(null, 'Subject'));
+        $this->assertSame('', haalHeaderOp([null, ['name' => 'X']], 'X'));
     }
 
     public function testBouwRfc2822Bericht(): void
@@ -396,6 +452,17 @@ final class EmailDashboardHelpersTest extends TestCase
         $this->assertStringContainsString("\r\n\r\nBody regel 1\nBody regel 2", $decoded);
     }
 
+    public function testBouwRfc2822BerichtWithoutOptionalHeaders(): void
+    {
+        $rawB64 = bouwRfc2822Bericht('to@example.com', 'Sub', "Body");
+        $decoded = base64UrlDecode($rawB64);
+        $this->assertStringContainsString("To: to@example.com\r\n", $decoded);
+        $this->assertStringContainsString("Subject: Sub\r\n", $decoded);
+        $this->assertStringNotContainsString("In-Reply-To:", $decoded);
+        $this->assertStringNotContainsString("References:", $decoded);
+        $this->assertStringNotContainsString("From:", $decoded);
+    }
+
     public function testZoekTekstPlainInPayload(): void
     {
         $raw = "Hello\nWorld";
@@ -411,6 +478,19 @@ final class EmailDashboardHelpersTest extends TestCase
 
         $out = zoekTekstPlainInPayload($payload);
         $this->assertSame($raw, $out);
+    }
+
+    public function testZoekTekstPlainInPayloadReturnsNullWhenMissing(): void
+    {
+        $payload = [
+            'mimeType' => 'multipart/mixed',
+            'parts' => [
+                ['mimeType' => 'text/plain', 'body' => ['data' => '']],
+                ['mimeType' => 'text/html', 'body' => ['data' => '']],
+            ],
+        ];
+        $this->assertNull(zoekTekstPlainInPayload($payload));
+        $this->assertNull(zoekTekstPlainInPayload(null));
     }
 
     public function testZoekTekstHtmlInPayloadStripsTags(): void
@@ -430,6 +510,15 @@ final class EmailDashboardHelpersTest extends TestCase
         $this->assertSame("Hi\nthere\nLine2", $out);
     }
 
+    public function testZoekTekstHtmlInPayloadReturnsNullOnEmpty(): void
+    {
+        $payload = [
+            'mimeType' => 'text/html',
+            'body' => ['data' => ''],
+        ];
+        $this->assertNull(zoekTekstHtmlInPayload($payload));
+    }
+
     public function testHaalHtmlUitPayloadReturnsRawHtml(): void
     {
         $rawHtml = '<div><b>Test</b></div>';
@@ -445,6 +534,18 @@ final class EmailDashboardHelpersTest extends TestCase
 
         $out = haalHtmlUitPayload($payload);
         $this->assertSame($rawHtml, $out);
+    }
+
+    public function testHaalHtmlUitPayloadReturnsNullWhenMissing(): void
+    {
+        $payload = [
+            'mimeType' => 'multipart/alternative',
+            'parts' => [
+                ['mimeType' => 'text/plain', 'body' => ['data' => 'aGVsbG8']],
+            ],
+        ];
+        $this->assertNull(haalHtmlUitPayload($payload));
+        $this->assertNull(haalHtmlUitPayload(null));
     }
 
     public function testVindBijlagePartOpAttachmentId(): void
@@ -469,6 +570,28 @@ final class EmailDashboardHelpersTest extends TestCase
         $this->assertIsArray($part);
         $this->assertSame('a.png', $part['filename']);
         $this->assertNull(vindBijlagePartOpAttachmentId($payload, 'att-xxx'));
+    }
+
+    public function testHaalBijlagesUitPayloadHonorsDispositionAndContentIdHeaders(): void
+    {
+        $payload = [
+            'mimeType' => 'multipart/mixed',
+            'parts' => [
+                [
+                    'mimeType' => 'application/octet-stream',
+                    'filename' => '',
+                    'headers' => [
+                        ['name' => 'Content-Id', 'value' => '<cid-1>'],
+                        ['name' => 'Content-Disposition', 'value' => 'attachment'],
+                    ],
+                    'body' => ['size' => 1],
+                ],
+            ],
+        ];
+
+        $bijlages = haalBijlagesUitPayload($payload);
+        $this->assertCount(1, $bijlages);
+        $this->assertSame('cid-1', $bijlages[0]['contentId']);
     }
 
     public function testVerwerkEmailRulesVoorMail(): void
@@ -499,5 +622,21 @@ final class EmailDashboardHelpersTest extends TestCase
         $r3 = verwerkEmailRulesVoorMail($rules, 'user@spam.com', 'normaal');
         $this->assertTrue($r3['ignore']);
         $this->assertSame('', $r3['extra_instructies']);
+    }
+
+    public function testVerwerkEmailRulesVoorMailIgnoresInvalidRulesAndCombinesPrompts(): void
+    {
+        $rules = [
+            ['condition_type' => '', 'condition_value' => 'x', 'action_type' => 'add_prompt', 'action_value' => 'a'],
+            ['condition_type' => 'subject_contains', 'condition_value' => '', 'action_type' => 'add_prompt', 'action_value' => 'b'],
+            ['condition_type' => 'subject_contains', 'condition_value' => 'a', 'action_type' => '', 'action_value' => 'c'],
+            ['condition_type' => 'unknown', 'condition_value' => 'a', 'action_type' => 'add_prompt', 'action_value' => 'd'],
+            ['condition_type' => 'subject_contains', 'condition_value' => 'test', 'action_type' => 'add_prompt', 'action_value' => 'p1'],
+            ['condition_type' => 'from_contains', 'condition_value' => '@ok', 'action_type' => 'add_prompt', 'action_value' => 'p2'],
+        ];
+
+        $r = verwerkEmailRulesVoorMail($rules, 'user@ok.com', 'this is a test');
+        $this->assertFalse($r['ignore']);
+        $this->assertSame("p1\n\np2", $r['extra_instructies']);
     }
 }
