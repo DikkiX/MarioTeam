@@ -1,6 +1,7 @@
 name: Deploy Naar Testserver (SFTP)
 
 env:
+  # Fix voor GitHub Actions runners waar sommige JS actions anders kunnen crashen op oudere Node versies.
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 on:
@@ -10,6 +11,7 @@ on:
   workflow_dispatch:
 
 concurrency:
+  # Voorkomt dat 2 deploys tegelijk lopen. Nieuwe push cancelt de vorige deploy-run.
   group: deploy-testserver
   cancel-in-progress: true
 
@@ -19,14 +21,18 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # 1) Haal de code op die we gaan checken + deployen.
       - name: Repository Ophalen
         uses: actions/checkout@v4
 
+      # 2) Installeer PHP zodat we syntax checks kunnen draaien vóór we deployen.
       - name: PHP Installeren
         uses: shivammathur/setup-php@v2
         with:
           php-version: '8.2'
 
+      # 3) PHP lint: stopt de workflow als er een syntax error in een .php bestand zit.
+      # Als deze stap faalt, wordt de deploy/upload stap hieronder automatisch niet uitgevoerd.
       - name: PHP Syntax Check (lint)
         run: |
           set -euo pipefail
@@ -44,11 +50,13 @@ jobs:
               php -l "$file"
             done
 
+      # 4) Deploy dependencies.
       - name: Lftp Installeren
         run: |
           sudo apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 -o Acquire::ForceIPv4=true update
           sudo apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 -o Acquire::ForceIPv4=true install -y lftp
 
+      # 5) Upload de repo naar de server via SFTP.
       - name: Bestanden Via SFTP Uploaden
         env:
           FTP_SERVER: ${{ secrets.FTP_SERVER }}
