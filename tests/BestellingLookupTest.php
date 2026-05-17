@@ -4,6 +4,8 @@ use PHPUnit\Framework\TestCase;
 
 require_once __DIR__ . '/../include/bestelling_lookup.php';
 
+// Fake DB laag voor unit tests:
+// We testen hier de business-logica in bestelling_lookup.php zonder echte database.
 final class FakeStmt
 {
     private mixed $row;
@@ -52,6 +54,7 @@ final class FakeConnThrows
 
 final class BestellingLookupTest extends TestCase
 {
+    // Items parsing: basic "Nx product" regels.
     public function testParseBestellingItemsTekstParsesLines(): void
     {
         $items = "1x Mario Kart 8 Deluxe\n2x Zelda BOTW";
@@ -66,6 +69,7 @@ final class BestellingLookupTest extends TestCase
         $this->assertSame(2, $parsed[1]['aantal']);
     }
 
+    // Items parsing: meta-regels (korting/verzendkosten/totaal) worden genegeerd + HTML wordt gedecodeerd.
     public function testParseBestellingItemsTekstIgnoresMetaLinesAndDecodesHtml(): void
     {
         $items = "Korting: -5 euro<br>\n1x Mario &amp; Luigi<br>\nVerzendkosten: 4,95 euro<br>\nTotaal: 9,95 euro";
@@ -76,6 +80,7 @@ final class BestellingLookupTest extends TestCase
         $this->assertSame(1, $parsed[0]['aantal']);
     }
 
+    // Items parsing: prijs "-> 10,50 euro" wordt herkend en dubbele regels worden samengevoegd.
     public function testParseBestellingItemsTekstParsesPrijsAndMergesDuplicates(): void
     {
         $items = "1x Game A -> 10,50 euro\n2x Game A -> 10.50 euro\n1x Game B";
@@ -88,23 +93,27 @@ final class BestellingLookupTest extends TestCase
         $this->assertSame('Game B', $parsed[1]['productnaam']);
     }
 
+    // Track&Trace parsing: simpele "provider|code" string.
     public function testHaalTrackCodeUitTracktraceTakesLastSegment(): void
     {
         $trace = "PostNL|3SYZAB123456789";
         $this->assertSame('3SYZAB123456789', haalTrackCodeUitTracktrace($trace));
     }
 
+    // Track&Trace parsing: sommige waarden hebben lege segmenten/extra pipes (zoals in productie gezien).
     public function testHaalTrackCodeUitTracktraceSkipsEmptySegments(): void
     {
         $trace = "|||9|3SGDWQ838080473";
         $this->assertSame('3SGDWQ838080473', haalTrackCodeUitTracktrace($trace));
     }
 
+    // Track&Trace parsing: leeg blijft leeg.
     public function testHaalTrackCodeUitTracktraceReturnsEmptyOnEmpty(): void
     {
         $this->assertSame('', haalTrackCodeUitTracktrace(''));
     }
 
+    // Order lookup: input validatie (privacy) -> zonder id+email doen we geen query.
     public function testZoekBestellingRuwRequiresIdAndEmail(): void
     {
         $conn = new FakeConn(false);
@@ -114,6 +123,7 @@ final class BestellingLookupTest extends TestCase
         $this->assertSame('Voor orderdata zijn zowel bestelling_id als email verplicht.', $result['message']);
     }
 
+    // Order lookup: geen rij terug uit DB -> "niet gevonden" melding.
     public function testZoekBestellingRuwReturnsNotFoundIfNoRow(): void
     {
         $conn = new FakeConn(false);
@@ -124,6 +134,7 @@ final class BestellingLookupTest extends TestCase
         $this->assertSame([':id' => 123, ':email' => 'a@b.nl'], $conn->lastExecuteParams);
     }
 
+    // Order lookup: track code aanwezig -> status "verzonden" + track_code gevuld.
     public function testZoekBestellingRuwSetsVerzendStatusVerzondenWhenTrackCodePresent(): void
     {
         $row = [
@@ -145,6 +156,7 @@ final class BestellingLookupTest extends TestCase
         $this->assertSame(2, $result['artikelen'][0]['aantal']);
     }
 
+    // Order lookup: geen track code maar wel inpakdatum -> status "niet_verzonden".
     public function testZoekBestellingRuwSetsVerzendStatusNietVerzondenWhenInpakdatumSet(): void
     {
         $row = [
@@ -163,6 +175,7 @@ final class BestellingLookupTest extends TestCase
         $this->assertSame('', $result['resultaat']['track_code']);
     }
 
+    // Order lookup: DB error/exception -> nette fallback tekst (geen details lekken).
     public function testZoekBestellingRuwHandlesException(): void
     {
         $conn = new FakeConnThrows();
