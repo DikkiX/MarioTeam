@@ -1,19 +1,20 @@
 <?php
+$conn = $conn ?? null;
+
+include_once __DIR__ . '/include/env.php';
+include_once __DIR__ . '/include/ChatFunction.php';
+include_once __DIR__ . '/include/bestelling_lookup.php';
+
 if (!defined('EMAIL_DASHBOARD_LIB_ONLY')) {
-    include_once $_SERVER['DOCUMENT_ROOT'] . '/include/db.inc';
-    include_once $_SERVER['DOCUMENT_ROOT'] . '/include/env.php';
-    include_once $_SERVER['DOCUMENT_ROOT'] . '/include/ChatFunction.php';
-    // Gedeelde order-lookup helpers (wordt ook door de chat-worker gebruikt).
-    include_once $_SERVER['DOCUMENT_ROOT'] . '/include/bestelling_lookup.php';
+    include_once __DIR__ . '/include/db.inc';
     $conn = $conn ?? null;
     if (!($conn instanceof PDO)) {
         http_response_code(500);
         exit('Database verbinding ontbreekt.');
     }
 
+    assert($conn instanceof PDO);
     session_start();
-} else {
-    $conn = null;
 }
 
 // Dit bestand is het complete e-mail dashboard:
@@ -2473,6 +2474,7 @@ if (isset($_GET['email_worker']) && (string) $_GET['email_worker'] === '1') {
 }
 
 if (!defined('EMAIL_DASHBOARD_LIB_ONLY')) {
+    assert($conn instanceof PDO);
     vereisDashboardLogin();
 
     if (!empty($_GET['attachment'])) {
