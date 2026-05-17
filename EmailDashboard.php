@@ -3044,6 +3044,21 @@ if (!defined('EMAIL_DASHBOARD_LIB_ONLY')) {
         $detailHtml .= '<button type="submit" name="actie" value="send" ' . $disabled . ' style="' . ($disabled ? $btnStyleDisabled : $btnStyle) . '">Verstuur mail via Gmail API</button>';
         $detailHtml .= '</div>';
         $detailHtml .= '</form>';
+
+        // Doorsturen = intern doorzetten naar bijv. management/leverancier.
+        // Dit gaat via een apart endpoint, zodat het ook "echt" als verstuurde mail in Gmail terechtkomt.
+        $detailHtml .= '<div style="height:1px; background:#e5e7eb; margin:12px 0;"></div>';
+        $detailHtml .= '<div style="font-weight:800; margin-bottom:6px;">Doorsturen (intern)</div>';
+        $detailHtml .= '<form method="post" action="/api/email/forward.php">';
+        $detailHtml .= '<input type="hidden" name="csrf" value="' . e($csrf) . '">';
+        $detailHtml .= '<input type="hidden" name="id" value="' . e($concept['id']) . '">';
+        $detailHtml .= '<label style="display:block; font-weight:700; margin-bottom:6px;">Doorsturen naar e-mailadres</label>';
+        $detailHtml .= '<input name="forward_to" placeholder="bijv. wibert@example.com" style="width:100%; box-sizing:border-box; border-radius:10px; border:1px solid #9ca3af; background:#ffffff; color:#111827; padding:10px 12px; margin-bottom:10px;">';
+        $detailHtml .= '<label style="display:block; font-weight:700; margin-bottom:6px;">Interne notitie (optioneel)</label>';
+        $detailHtml .= '<textarea name="forward_note" rows="4" placeholder="Schrijf hier eventueel een korte interne toelichting..." style="width:100%; box-sizing:border-box; border-radius:10px; border:1px solid #9ca3af; background:#ffffff; color:#111827; padding:10px 12px; resize:vertical; margin-bottom:10px;"></textarea>';
+        $detailHtml .= '<button type="submit" ' . $disabled . ' style="' . ($disabled ? $btnStyleDisabled : $btnStyle) . ' width:100%;">Doorsturen via Gmail API</button>';
+        $detailHtml .= '</form>';
+
         $detailHtml .= '</div>';
         $detailHtml .= '</div>';
     }
