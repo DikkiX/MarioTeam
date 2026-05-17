@@ -24,7 +24,7 @@
 			$i++;
 		}
 	}
-	echo 'Aantal chats in db.chatHistry: ' . $i;
+	echo 'Aantal chats in db.chatHistry: ' . $i
 	?>
 </body>
 
