@@ -170,20 +170,18 @@ Code-links in dit document zijn relatief (werken in GitHub én als je de repo lo
 - Model/kwaliteit aanpassen:
   - zet `CHAT_MODEL_MODE=1` in `.env` (5.2) of `2` (5-mini) of `3` (4.1-mini)
 
-## 6) Deploy checks (US26 + US27)
+## 6) Deploy checks
 
 - Workflow bestand:
   - [deploy.yml](.github/workflows/deploy.yml)
-- US26 (PHP lint vóór deploy):
-  - Doel: geen syntax errors live zetten.
-  - Werkt zo: de workflow draait `php -l` over alle `.php` bestanden; bij 1 error stopt de deploy.
-- US27 (Unit tests + coverage vóór deploy):
-  - Doel: logica checken vóór upload (niet alleen “syntax”).
-  - Waar staat het:
-    - Composer deps: [composer.json](composer.json)
-    - PHPUnit config + coverage filter: [phpunit.xml](phpunit.xml)
-    - Tests: [BestellingLookupTest.php](tests/BestellingLookupTest.php)
-  - Hoe werkt coverage:
-    - Coverage telt welke regels code tijdens tests worden uitgevoerd.
-    - Welke bestanden meetellen bepalen we in `phpunit.xml` onder `<source><include>...`.
-    - Als je coverage % laag is, betekent dat meestal: er ontbreken tests voor bepaalde codepaden/randgevallen.
+- Wat er gebeurt vóór upload:
+  - Stap 1: PHP lint (syntax check). Als er 1 syntax error is, stopt de deploy meteen.
+  - Stap 2: Unit tests + coverage. Als tests falen, stopt de deploy ook.
+- Waar dit staat:
+  - Composer deps: [composer.json](composer.json)
+  - PHPUnit config (incl. coverage selectie): [phpunit.xml](phpunit.xml)
+  - Tests: [BestellingLookupTest.php](tests/BestellingLookupTest.php)
+- Coverage (simpel):
+  - Coverage laat zien welke regels code door de tests worden uitgevoerd.
+  - Alleen de bestanden die in `phpunit.xml` staan tellen mee.
+  - Laag % = meestal te weinig tests of te weinig verschillende gevallen getest.

@@ -60,8 +60,8 @@ jobs:
             exit 1
           fi
 
-      # 4) Unit tests + coverage (US27).
-      # Dit voorkomt dat we kapotte logica deployen. Coverage is een signaal: als het % laag is, missen er tests.
+      # 4) Unit tests + coverage.
+      # Dit voorkomt dat we kapotte logica uploaden. Coverage is een signaal: als het % laag is, missen er tests.
       - name: Composer Install (dev)
         run: |
           set -euo pipefail
@@ -71,7 +71,7 @@ jobs:
       - name: Unit Tests (PHPUnit) + Coverage
         run: |
           set -euo pipefail
-          # Coverage filter staat in phpunit.xml (source/include). Als je nieuwe code wilt meetellen, voeg bestanden daar toe.
+          # Welke bestanden meetellen voor coverage staat in phpunit.xml (source/include).
           vendor/bin/phpunit --coverage-text --coverage-clover=coverage.xml
 
       # 5) Deploy dependencies.
