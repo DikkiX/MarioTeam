@@ -14,7 +14,7 @@
   <source>
     <include>
       <file>include/bestelling_lookup.php</file>
-      <file>EmailDashboard.php</file>
+      <file>include/email_dashboard_helpers.php</file>
     </include>
   </source>
 </phpunit>

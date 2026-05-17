@@ -100,6 +100,8 @@ Code-links in dit document zijn relatief (werken in GitHub én als je de repo lo
   - Inloggen + basis beveiliging tegen nep-verzoeken.
   - Gmail token lezen/refreshen.
   - Mails ophalen + AI-concepten aanmaken + concepten beheren.
+- Helperbestand (los getrokken functies): [email_dashboard_helpers.php](include/email_dashboard_helpers.php)
+  - Dit bevat “pure” helpers die goed unit-testbaar zijn (payload parsen, HTML opschonen, e-mailadressen/bestelnummers uit tekst halen, bijlages vinden).
 
 ### Belangrijke begrippen (simpel uitgelegd)
 - CSRF:
@@ -116,11 +118,11 @@ Code-links in dit document zijn relatief (werken in GitHub én als je de repo lo
 - Doel:
   - Bijlagen kunnen downloaden en afbeeldingen meteen zien, zonder Gmail te openen.
 - Waar in de code:
-  - Bijlages in een mail vinden: [haalBijlagesUitPayload](EmailDashboard.php#L651) (loopt door de mail “parts” heen).
-  - `cid:` plaatjes in HTML fixen: [vervangCidSrcInHtml](EmailDashboard.php#L733)
-  - HTML schoonmaken (veilig) en `<img>` toelaten: [sanitizeEmailHtmlVoorDashboard](EmailDashboard.php#L1198)
-  - Bijlage ophalen/downloaden (aparte URL): [attachment endpoint](EmailDashboard.php#L2473)
-  - Bijlagen tonen in “Gespreksgeschiedenis”: [thread render](EmailDashboard.php#L3453)
+  - Bijlages in een mail vinden: [haalBijlagesUitPayload](include/email_dashboard_helpers.php#L110) (loopt door de mail “parts” heen).
+  - `cid:` plaatjes in HTML fixen: [vervangCidSrcInHtml](include/email_dashboard_helpers.php#L192)
+  - HTML schoonmaken (veilig) en `<img>` toelaten: [sanitizeEmailHtmlVoorDashboard](include/email_dashboard_helpers.php#L305)
+  - Bijlage ophalen/downloaden (aparte URL): [attachment endpoint](EmailDashboard.php#L1889-L1980)
+  - Bijlagen tonen in “Gespreksgeschiedenis”: [thread render](EmailDashboard.php#L3017-L3048)
 - Hoe het werkt (simpel):
   - Inline plaatjes (die in de mailtekst staan) worden in de tekst getoond, net als Gmail.
   - Losse bijlages blijven compact: je ziet een “documentje/knop” met naam + grootte, en je kunt downloaden.
@@ -136,8 +138,8 @@ Code-links in dit document zijn relatief (werken in GitHub én als je de repo lo
   - Het e-mailconcept gebruikt de centrale helper [ChatFunction.php](include/ChatFunction.php) (`CHATGPT(...)`) en maakt één antwoord per mail.
   - US23: voor ordervragen doet EmailDashboard eerst zelf een DB lookup (bestelnummer + email) en stuurt die feiten mee naar de AI:
     - Helpers: [bestelling_lookup.php](include/bestelling_lookup.php)
-    - Extractie uit mail: [extracteerBestelEnEmailUitTekst](EmailDashboard.php#L1124)
-    - AI call: [roepOpenAiAanVoorEmailConcept](EmailDashboard.php#L1343)
+    - Extractie uit mail: [extracteerBestelEnEmailUitTekst](include/email_dashboard_helpers.php#L400)
+    - AI call: [roepOpenAiAanVoorEmailConcept](EmailDashboard.php#L1033)
 
 ### System0 in e-mail (alleen als je het echt gebruikt)
 - System0 is een extra AI-stap die een label teruggeeft zoals “Zending” of “Service”.
@@ -195,3 +197,4 @@ Code-links in dit document zijn relatief (werken in GitHub én als je de repo lo
   - Coverage laat zien welke regels code door de tests worden uitgevoerd.
   - Alleen de bestanden die in `phpunit.xml` staan tellen mee.
   - Laag % = meestal te weinig tests of te weinig verschillende gevallen getest.
+  - Op dit moment: `include/bestelling_lookup.php` + `include/email_dashboard_helpers.php`

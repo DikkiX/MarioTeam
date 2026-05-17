@@ -47,7 +47,7 @@ Test bestand: [tests/BestellingLookupTest.php](tests/BestellingLookupTest.php)
 - Track & trace code uit tekst halen (`haalTrackCodeUitTracktrace`)
 - Order lookup logica testen met een fake DB (`zoekBestellingRuw` + FakeConn)
 
-2) EmailDashboard helpers (`EmailDashboard.php`)
+2) EmailDashboard helpers (`include/email_dashboard_helpers.php`)
 - Helpers die je kunt testen zonder Gmail of login, zoals:
   - bestandsgrootte tonen (`formatteerBestandsgrootte`)
   - content-id opschonen (`normaliseerContentId`)
@@ -66,6 +66,10 @@ Test bestand: [tests/BestellingLookupTest.php](tests/BestellingLookupTest.php)
   - te weinig verschillende gevallen getest (happy flow wel, randgevallen niet).
 
 Welke bestanden meetellen voor coverage staat in: [phpunit.xml](phpunit.xml)
+
+Op dit moment tellen deze bestanden mee:
+- `include/bestelling_lookup.php`
+- `include/email_dashboard_helpers.php`
 
 ## Waarom we niet alles met echte DB/Gmail testen in unit tests
 
