@@ -25,7 +25,6 @@
 		}
 	}
 	echo 'Aantal chats in db.chatHistry: ' . $i;
-	$broken =
 	?>
 </body>
 
