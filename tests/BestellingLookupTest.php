@@ -395,4 +395,109 @@ final class EmailDashboardHelpersTest extends TestCase
         $this->assertStringContainsString("References: <ref1@test> <ref2@test>\r\n", $decoded);
         $this->assertStringContainsString("\r\n\r\nBody regel 1\nBody regel 2", $decoded);
     }
+
+    public function testZoekTekstPlainInPayload(): void
+    {
+        $raw = "Hello\nWorld";
+        $data = rtrim(strtr(base64_encode($raw), '+/', '-_'), '=');
+
+        $payload = [
+            'mimeType' => 'multipart/mixed',
+            'parts' => [
+                ['mimeType' => 'text/html', 'body' => ['data' => $data]],
+                ['mimeType' => 'text/plain', 'body' => ['data' => $data]],
+            ],
+        ];
+
+        $out = zoekTekstPlainInPayload($payload);
+        $this->assertSame($raw, $out);
+    }
+
+    public function testZoekTekstHtmlInPayloadStripsTags(): void
+    {
+        $rawHtml = "<head><style>.x{}</style><script>alert(1)</script></head>"
+            . "<div>Hi<br>there</div><p>Line2</p>";
+        $data = rtrim(strtr(base64_encode($rawHtml), '+/', '-_'), '=');
+
+        $payload = [
+            'mimeType' => 'multipart/alternative',
+            'parts' => [
+                ['mimeType' => 'text/html', 'body' => ['data' => $data]],
+            ],
+        ];
+
+        $out = zoekTekstHtmlInPayload($payload);
+        $this->assertSame("Hi\nthere\nLine2", $out);
+    }
+
+    public function testHaalHtmlUitPayloadReturnsRawHtml(): void
+    {
+        $rawHtml = '<div><b>Test</b></div>';
+        $data = rtrim(strtr(base64_encode($rawHtml), '+/', '-_'), '=');
+
+        $payload = [
+            'mimeType' => 'multipart/alternative',
+            'parts' => [
+                ['mimeType' => 'text/plain', 'body' => ['data' => $data]],
+                ['mimeType' => 'text/html', 'body' => ['data' => $data]],
+            ],
+        ];
+
+        $out = haalHtmlUitPayload($payload);
+        $this->assertSame($rawHtml, $out);
+    }
+
+    public function testVindBijlagePartOpAttachmentId(): void
+    {
+        $payload = [
+            'mimeType' => 'multipart/mixed',
+            'parts' => [
+                [
+                    'mimeType' => 'multipart/related',
+                    'parts' => [
+                        [
+                            'mimeType' => 'image/png',
+                            'filename' => 'a.png',
+                            'body' => ['attachmentId' => 'att-123', 'size' => 10],
+                        ],
+                    ],
+                ],
+            ],
+        ];
+
+        $part = vindBijlagePartOpAttachmentId($payload, 'att-123');
+        $this->assertIsArray($part);
+        $this->assertSame('a.png', $part['filename']);
+        $this->assertNull(vindBijlagePartOpAttachmentId($payload, 'att-xxx'));
+    }
+
+    public function testVerwerkEmailRulesVoorMail(): void
+    {
+        $rules = [
+            [
+                'condition_type' => 'subject_contains',
+                'condition_value' => 'spoed',
+                'action_type' => 'add_prompt',
+                'action_value' => 'Wees extra snel.',
+            ],
+            [
+                'condition_type' => 'from_contains',
+                'condition_value' => '@spam.com',
+                'action_type' => 'ignore',
+                'action_value' => '',
+            ],
+        ];
+
+        $r1 = verwerkEmailRulesVoorMail($rules, 'User@Spam.com', 'spoed: vraag');
+        $this->assertTrue($r1['ignore']);
+        $this->assertSame("Wees extra snel.", $r1['extra_instructies']);
+
+        $r2 = verwerkEmailRulesVoorMail($rules, 'user@ok.com', 'spoed: vraag');
+        $this->assertFalse($r2['ignore']);
+        $this->assertSame("Wees extra snel.", $r2['extra_instructies']);
+
+        $r3 = verwerkEmailRulesVoorMail($rules, 'user@spam.com', 'normaal');
+        $this->assertTrue($r3['ignore']);
+        $this->assertSame('', $r3['extra_instructies']);
+    }
 }
