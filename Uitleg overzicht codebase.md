@@ -174,9 +174,19 @@ Code-links in dit document zijn relatief (werken in GitHub én als je de repo lo
 
 - Workflow bestand:
   - [deploy.yml](.github/workflows/deploy.yml)
-- Wat er gebeurt vóór upload:
-  - Stap 1: PHP lint (syntax check). Als er 1 syntax error is, stopt de deploy meteen.
-  - Stap 2: Unit tests + coverage. Als tests falen, stopt de deploy ook.
+- Wat er gebeurt (in volgorde):
+  - Stap 1: PHP lint (syntax check) over alle `.php` bestanden.
+    - Doel: geen code uploaden die al kapot is door een syntax error.
+    - Als dit faalt: je ziet een `php -l` error, en de deploy stopt.
+  - Stap 2: Composer install (zet PHPUnit in `vendor/`).
+  - Stap 3: Unit tests + coverage.
+    - Doel unit tests: checken of onze helper-functies doen wat we verwachten.
+    - Als tests falen: je ziet welke test faalt, en de deploy stopt.
+    - Coverage: extra info hoeveel regels er tijdens tests geraakt zijn.
+  - Stap 4: Upload via SFTP.
+  - Stap 5: Smoke check (na upload).
+    - Doel: snelle check of de belangrijkste pagina/endpoints reageren.
+    - Voorbeeld: `status.php` zonder params hoort 422 te geven (dus endpoint leeft).
 - Waar dit staat:
   - Composer deps: [composer.json](composer.json)
   - PHPUnit config (incl. coverage selectie): [phpunit.xml](phpunit.xml)
