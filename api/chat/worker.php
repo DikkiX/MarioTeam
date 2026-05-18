@@ -380,6 +380,7 @@ function voerInterneFunctieUit($conn, $functieNaam, $arguments)
         ]);
 
         $resultaat = $stmt->fetchAll();
+        $resultaat = is_array($resultaat) ? $resultaat : [];
 
         $basisUrl = '';
         if (isset($univ_web) && is_string($univ_web) && $univ_web !== '') {
@@ -407,9 +408,29 @@ function voerInterneFunctieUit($conn, $functieNaam, $arguments)
             }
         }
 
+        if (empty($resultaat)) {
+            return [
+                'functie' => 'zoek_productvoorraad',
+                'gevonden' => false,
+                'status' => 'niet_in_database',
+                'message' => 'Geen product gevonden voor deze zoekterm.',
+                'resultaat' => [],
+            ];
+        }
+
+        $heeftOpVoorraad = false;
+        foreach ($resultaat as $row) {
+            $op = isset($row['op_voorraad']) ? strtolower(trim((string) $row['op_voorraad'])) : '';
+            if ($op === 'ja') {
+                $heeftOpVoorraad = true;
+                break;
+            }
+        }
+
         return [
             'functie' => 'zoek_productvoorraad',
-            'gevonden' => !empty($resultaat),
+            'gevonden' => true,
+            'status' => $heeftOpVoorraad ? 'op_voorraad' : 'niet_op_voorraad',
             'resultaat' => $resultaat,
         ];
     }
@@ -609,7 +630,7 @@ function maakBerichtenVoorOpenAi($conn, $bericht)
 {
     global $univ_one, $univ_web, $univ_nin, $univ_web_text, $univ_mar, $univ_zoeken;
 
-    $basisPrompt = 'Je bent een klantenservice assistent voor MarioSwitch.nl. Als je live data nodig hebt, gebruik je een functie. Geef geen data op basis van aannames als een functie nodig is. Noem nooit exacte voorraadaantallen aan klanten. Zeg alleen of iets op voorraad is of niet. Voor orderdata moet de klant eerst zowel een bestelnummer als het juiste e-mailadres geven. Als je via zoek_bestelling artikelen terugkrijgt en artikelen_gevonden true is, presenteer die als een nette lijst met per regel: "{aantal}x {productnaam} — {prijs} euro" (als prijs bekend is). Toon daarna altijd: "Verzendkosten: X euro" en "Totaal: Y euro" op basis van resultaat.verzendkosten en resultaat.totaal. Als artikelen_gevonden false is, zeg dan dat je de artikelregels nu niet kunt ophalen (en claim niet dat er geen artikelen zijn). Voor verzenden: gebruik resultaat.verzend_status (verzonden/niet_verzonden). Als resultaat.track_code gevuld is, toon die. Als track_code leeg is, zeg dat er (nog) geen track&trace code beschikbaar is. Bij bezorgtijden/verzenden/verzendkosten: gebruik alleen de info uit de FAQ die je hebt gekregen. Noem geen zelfbedachte levertijden zoals "1 tot 3 werkdagen". Als er geen exacte belofte staat, zeg dat het meestal de volgende werkdag is (bij bestelling voor 18:00), maar dat er geen 100% garantie is. Als de gebruiker vraagt of een game op voorraad is (of vraagt naar prijs/voorraad), roep altijd de functie zoek_productvoorraad aan en baseer je antwoord alleen op die uitkomst.';
+    $basisPrompt = 'Je bent een klantenservice assistent voor MarioSwitch.nl. Als je live data nodig hebt, gebruik je een functie. Geef geen data op basis van aannames als een functie nodig is. Noem nooit exacte voorraadaantallen aan klanten. Zeg alleen of iets op voorraad is of niet. Voor orderdata moet de klant eerst zowel een bestelnummer als het juiste e-mailadres geven. Als je via zoek_bestelling artikelen terugkrijgt en artikelen_gevonden true is, presenteer die als een nette lijst met per regel: "{aantal}x {productnaam} — {prijs} euro" (als prijs bekend is). Toon daarna altijd: "Verzendkosten: X euro" en "Totaal: Y euro" op basis van resultaat.verzendkosten en resultaat.totaal. Als artikelen_gevonden false is, zeg dan dat je de artikelregels nu niet kunt ophalen (en claim niet dat er geen artikelen zijn). Voor verzenden: gebruik resultaat.verzend_status (verzonden/niet_verzonden). Als resultaat.track_code gevuld is, toon die. Als track_code leeg is, zeg dat er (nog) geen track&trace code beschikbaar is. Bij bezorgtijden/verzenden/verzendkosten: gebruik alleen de info uit de FAQ die je hebt gekregen. Noem geen zelfbedachte levertijden zoals "1 tot 3 werkdagen". Als er geen exacte belofte staat, zeg dat het meestal de volgende werkdag is (bij bestelling voor 18:00), maar dat er geen 100% garantie is. Als de gebruiker vraagt of een game op voorraad is (of vraagt naar prijs/voorraad), roep altijd de functie zoek_productvoorraad aan en baseer je antwoord alleen op die uitkomst. Bij de uitkomst van zoek_productvoorraad geldt: als gevonden=false of status="niet_in_database", zeg dan dat het product op dit moment niet in het assortiment staat (dus nu niet verkocht wordt) en vraag eventueel om een link/andere zoekterm. Als status="niet_op_voorraad", zeg dat het product nu niet op voorraad is en dat het later weer kan terugkomen. Als status="op_voorraad", zeg dat het op voorraad is. Gebruik product_url als je een link wilt geven. Zeg nooit: "als er een prijs op de website staat is het op voorraad" en leid voorraad ook niet af van prijs; vertrouw alleen op zoek_productvoorraad. Zeg ook niet dat je het "voorraad aantal" niet kunt ophalen; zeg dat je alleen op voorraad ja/nee kunt geven.';
 
     // Stap 1: haal context (laatste afgeronde berichten) op uit de queue.
     $contextMessages = haalGespreksContextOp(
