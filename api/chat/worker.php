@@ -216,6 +216,20 @@ function bepaalGeforceerdeToolChoice($berichtTekst)
         ];
     }
 
+    // Ook bij genre-vragen (bijv. "heb je race spellen?") willen we niet gokken.
+    // We forceren dan ook zoek_productaanraders zodat antwoorden altijd uit echte producten komen.
+    $heeftGenreWoord = preg_match('/\b(race|racing|autos?|kart|mario\s*kart|dans|dance|just\s*dance|rpg|jrpg|avontuur|actie|shooter|schiet|puzzel|party|multiplayer|co-?op|sport|voetbal|basketbal|horror|strategy|strategie)\b/i', (string) $berichtTekst) === 1;
+    $vraagtOmSpellen = preg_match('/\b(spel|spellen|game|games)\b/i', (string) $berichtTekst) === 1;
+    $isVraag = preg_match('/\?|\b(heb\s+je|hebben\s+jullie|zijn\s+er|verkoop|verkopen\s+jullie|aanraden)\b/i', (string) $berichtTekst) === 1;
+    if ($heeftGenreWoord && $vraagtOmSpellen && $isVraag) {
+        return [
+            'type' => 'function',
+            'function' => [
+                'name' => 'zoek_productaanraders',
+            ],
+        ];
+    }
+
     return 'auto';
 }
 
