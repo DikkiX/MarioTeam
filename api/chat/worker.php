@@ -2,6 +2,7 @@
 include_once $_SERVER['DOCUMENT_ROOT'] . '/include/db.inc';
 // Gedeelde order-lookup (wordt ook door EmailDashboard gebruikt).
 include_once $_SERVER['DOCUMENT_ROOT'] . '/include/bestelling_lookup.php';
+include_once $_SERVER['DOCUMENT_ROOT'] . '/include/chat_functie_keuze.php';
 ignore_user_abort(true);
 set_time_limit(0);
 
@@ -166,7 +167,7 @@ function bouwToolsVoorOpenAi()
                 // aanraders/alternatieven moeten altijd uit de echte database komen (en op voorraad zijn),
                 // anders lijkt het alsof de voorraadchecker niet werkt.
                 'name' => 'zoek_productaanraders',
-                'description' => 'Zoek live producten die op voorraad zijn (aanraders/alternatieven). Gebruik dit om alleen producten te noemen die echt in de database staan en op voorraad zijn.',
+                'description' => 'Zoek live producten die op voorraad zijn (aanraders/alternatieven). Gebruik zoekterm op genre (RPG, dans, race, party), niet alleen op een exacte gamenaam. Gebruik dit om alleen producten te noemen die echt in de database staan en op voorraad zijn.',
                 'parameters' => [
                     'type' => 'object',
                     'properties' => [
@@ -185,52 +186,6 @@ function bouwToolsVoorOpenAi()
             ],
         ],
     ];
-}
-
-// Deze functie kijkt of een bericht duidelijk over een bestelling gaat.
-// Als bestelnummer en e-mail allebei in de tekst staan, kunnen we de functie afdwingen.
-function bepaalGeforceerdeToolChoice($berichtTekst)
-{
-    // Als er én een bestelnummer én een e-mail in de tekst staat, gaan we meteen zoeken.
-    $heeftBestelWoord = preg_match('/bestelling|bestelnummer|order|status|inhoud|artikelen|orderregels|wat heb ik besteld|wat zit er/i', $berichtTekst) === 1;
-    $heeftEmail = preg_match('/[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}/i', $berichtTekst) === 1;
-    $heeftBestelnummer = preg_match('/\b\d+\b/', $berichtTekst) === 1;
-
-    if ($heeftBestelWoord && $heeftEmail && $heeftBestelnummer) {
-        return [
-            'type' => 'function',
-            'function' => [
-                'name' => 'zoek_bestelling',
-            ],
-        ];
-    }
-
-    // Als iemand om vergelijkbare games / suggesties / aanraders vraagt, willen we alleen echte producten noemen.
-    // Daarom forceren we een lookup op in-stock producten (zoek_productaanraders).
-    if (preg_match('/\b(aanraden|aanrader|suggest|suggestie|alternatief|soortgelijk|gelijke|vergelijkbaar|vergelijkbare|andere\s+games|andere\s+spellen)\b/i', (string) $berichtTekst) === 1) {
-        return [
-            'type' => 'function',
-            'function' => [
-                'name' => 'zoek_productaanraders',
-            ],
-        ];
-    }
-
-    // Ook bij genre-vragen (bijv. "heb je race spellen?") willen we niet gokken.
-    // We forceren dan ook zoek_productaanraders zodat antwoorden altijd uit echte producten komen.
-    $heeftGenreWoord = preg_match('/\b(race|racing|autos?|kart|mario\s*kart|dans|dance|just\s*dance|rpg|jrpg|avontuur|actie|shooter|schiet|puzzel|party|multiplayer|co-?op|sport|voetbal|basketbal|horror|strategy|strategie)\b/i', (string) $berichtTekst) === 1;
-    $vraagtOmSpellen = preg_match('/\b(spel|spellen|game|games)\b/i', (string) $berichtTekst) === 1;
-    $isVraag = preg_match('/\?|\b(heb\s+je|hebben\s+jullie|zijn\s+er|verkoop|verkopen\s+jullie|aanraden)\b/i', (string) $berichtTekst) === 1;
-    if ($heeftGenreWoord && $vraagtOmSpellen && $isVraag) {
-        return [
-            'type' => 'function',
-            'function' => [
-                'name' => 'zoek_productaanraders',
-            ],
-        ];
-    }
-
-    return 'auto';
 }
 
 // Deze functie stuurt berichten naar OpenAI.
@@ -793,7 +748,7 @@ function maakBerichtenVoorOpenAi($conn, $bericht)
 {
     global $univ_one, $univ_web, $univ_nin, $univ_web_text, $univ_mar, $univ_zoeken;
 
-    $basisPrompt = 'Je bent een klantenservice assistent voor MarioSwitch.nl. Als je live data nodig hebt, gebruik je een functie. Geef geen data op basis van aannames als een functie nodig is. Noem nooit exacte voorraadaantallen aan klanten. Zeg alleen of iets op voorraad is of niet. Voor orderdata moet de klant eerst zowel een bestelnummer als het juiste e-mailadres geven. Als je via zoek_bestelling artikelen terugkrijgt en artikelen_gevonden true is, presenteer die als een nette lijst met per regel: "{aantal}x {productnaam} — {prijs} euro" (als prijs bekend is). Toon daarna altijd: "Verzendkosten: X euro" en "Totaal: Y euro" op basis van resultaat.verzendkosten en resultaat.totaal. Als artikelen_gevonden false is, zeg dan dat je de artikelregels nu niet kunt ophalen (en claim niet dat er geen artikelen zijn). Voor verzenden: gebruik resultaat.verzend_status (verzonden/niet_verzonden). Als resultaat.track_code gevuld is, toon die. Als track_code leeg is, zeg dat er (nog) geen track&trace code beschikbaar is. Bij bezorgtijden/verzenden/verzendkosten: gebruik alleen de info uit de FAQ die je hebt gekregen. Noem geen zelfbedachte levertijden zoals "1 tot 3 werkdagen". Als er geen exacte belofte staat, zeg dat het meestal de volgende werkdag is (bij bestelling voor 18:00), maar dat er geen 100% garantie is. Als de gebruiker vraagt of een game op voorraad is (of vraagt naar prijs/voorraad), roep altijd de functie zoek_productvoorraad aan en baseer je antwoord alleen op die uitkomst. Bij de uitkomst van zoek_productvoorraad geldt: als gevonden=false of status="niet_in_database", zeg dan dat het product op dit moment niet in het assortiment staat (dus nu niet verkocht wordt) en vraag eventueel om een link/andere zoekterm. Als status="niet_op_voorraad", zeg dat het product nu niet op voorraad is en dat het later weer kan terugkomen. Als status="op_voorraad", zeg dat het op voorraad is. Gebruik product_url als je een link wilt geven. Zeg nooit: "als er een prijs op de website staat is het op voorraad" en leid voorraad ook niet af van prijs; vertrouw alleen op zoek_productvoorraad. Zeg ook niet dat je het "voorraad aantal" niet kunt ophalen; zeg dat je alleen op voorraad ja/nee kunt geven. Als de gebruiker om aanraders/vergelijkbare games vraagt, noem dan alleen titels die je live hebt opgehaald via zoek_productaanraders. Noem nooit zelf verzonnen titels of links.';
+    $basisPrompt = 'Je bent een klantenservice assistent voor MarioSwitch.nl. Als je live data nodig hebt, gebruik je een functie. Geef geen data op basis van aannames als een functie nodig is. Noem nooit exacte voorraadaantallen aan klanten. Zeg alleen of iets op voorraad is of niet. Voor orderdata moet de klant eerst zowel een bestelnummer als het juiste e-mailadres geven. Als je via zoek_bestelling artikelen terugkrijgt en artikelen_gevonden true is, presenteer die als een nette lijst met per regel: "{aantal}x {productnaam} — {prijs} euro" (als prijs bekend is). Toon daarna altijd: "Verzendkosten: X euro" en "Totaal: Y euro" op basis van resultaat.verzendkosten en resultaat.totaal. Als artikelen_gevonden false is, zeg dan dat je de artikelregels nu niet kunt ophalen (en claim niet dat er geen artikelen zijn). Voor verzenden: gebruik resultaat.verzend_status (verzonden/niet_verzonden). Als resultaat.track_code gevuld is, toon die. Als track_code leeg is, zeg dat er (nog) geen track&trace code beschikbaar is. Bij bezorgtijden/verzenden/verzendkosten: gebruik alleen de info uit de FAQ die je hebt gekregen. Noem geen zelfbedachte levertijden zoals "1 tot 3 werkdagen". Als er geen exacte belofte staat, zeg dat het meestal de volgende werkdag is (bij bestelling voor 18:00), maar dat er geen 100% garantie is. Als de gebruiker vraagt of een game op voorraad is (of vraagt naar prijs/voorraad), roep altijd de functie zoek_productvoorraad aan en baseer je antwoord alleen op die uitkomst. Bij de uitkomst van zoek_productvoorraad geldt: als gevonden=false of status="niet_in_database", zeg dan dat het product op dit moment niet in het assortiment staat (dus nu niet verkocht wordt) en vraag eventueel om een link/andere zoekterm. Als status="niet_op_voorraad", zeg dat het product nu niet op voorraad is en dat het later weer kan terugkomen. Als status="op_voorraad", zeg dat het op voorraad is. Gebruik product_url als je een link wilt geven. Zeg nooit: "als er een prijs op de website staat is het op voorraad" en leid voorraad ook niet af van prijs; vertrouw alleen op zoek_productvoorraad. Zeg ook niet dat je het "voorraad aantal" niet kunt ophalen; zeg dat je alleen op voorraad ja/nee kunt geven. Als de gebruiker om aanraders/vergelijkbare games vraagt, noem dan alleen titels die je live hebt opgehaald via zoek_productaanraders. Gebruik als zoekterm een genre (RPG, dans, race, party), niet alleen de exacte gamenaam. Als zoeken op de gamenaam geen resultaten geeft, probeer opnieuw met een passend genre voordat je zegt dat er niets is. Noem nooit zelf verzonnen titels of links.';
 
     // Stap 1: haal context (laatste afgeronde berichten) op uit de queue.
     $contextMessages = haalGespreksContextOp(
@@ -915,7 +870,7 @@ try {
     $messages = maakBerichtenVoorOpenAi($conn, $bericht);
     $tools = bouwToolsVoorOpenAi();
     $userMessage = (string) ($bericht['user_message'] ?? '');
-    $toolChoice = bepaalGeforceerdeToolChoice($userMessage);
+    $toolChoice = bepaalGeforceerdeFunctieKeuze($userMessage);
     // Als de gebruiker naar voorraad/prijs vraagt willen we altijd live data ophalen
     // via zoek_productvoorraad, zodat de bot niet gaat gokken.
     if ($toolChoice === 'auto' && preg_match('/\b(op\s+voorraad|voorraad|beschikbaar|in\s+stock|prijs)\b/i', $userMessage) === 1) {

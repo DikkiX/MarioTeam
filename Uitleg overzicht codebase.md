@@ -30,19 +30,25 @@ Code-links in dit document zijn relatief (werken in GitHub én als je de repo lo
     1) system0 (onderwerp/platform bepalen)
     2) system1 opbouwen met FAQ/contact/today
     3) definitief antwoord maken
-  - Kan ook interne tools gebruiken:
-    - `zoek_productvoorraad` (voorraad/prijs/product info)
+  - Kan ook interne functies gebruiken (live data uit de database):
+    - `zoek_productvoorraad` (één product: op voorraad ja/nee)
+    - `zoek_productaanraders` (genre/aanraders: alleen titels die echt op voorraad zijn)
     - `zoek_bestelling` (order-status)
   - Order lookup helpers (gedeeld met EmailDashboard):
     - [bestelling_lookup.php](include/bestelling_lookup.php)
     - Worker gebruikt hiervoor de functie `zoekBestellingRuw(...)` uit dat bestand.
-  - Regels:
-    - Bij vragen over “op voorraad/prijs/beschikbaar” wordt tool-gebruik afgedwongen zodat de bot niet gaat gokken ([worker.php:L736](api/chat/worker.php#L736)).
-  - Belangrijkste functies (handig om snel te vinden):
-    - Berichten/prompt opbouw: [maakBerichtenVoorOpenAi](api/chat/worker.php#L608)
-    - system0 label ophalen: [haalAssistant0VoorBericht](api/chat/worker.php#L497)
-    - system1 bouwen via includes: [bouwSystem1MetIncludes](api/chat/worker.php#L550)
-    - Tool forcing order lookup: [bepaalGeforceerdeToolChoice](api/chat/worker.php#L167)
+  - Functie-keuze (zodat de bot niet gokt bij spellen/voorraad):
+    - [chat_functie_keuze.php](include/chat_functie_keuze.php)
+    - Functie: `bepaalGeforceerdeFunctieKeuze(...)` — kijkt naar de klanttekst en beslist welke functie verplicht is.
+    - Voorbeelden:
+      - “spellen die lijken op Xenoblade” → `zoek_productaanraders`
+      - “danspellen?” (één woord: dans+pellen) → `zoek_productaanraders`
+      - “hebben jullie geen Just Dance?” → `zoek_productvoorraad`
+    - Bij vragen over “op voorraad/prijs/beschikbaar” dwingt de worker ook functie-gebruik af ([worker.php](api/chat/worker.php)).
+  - Belangrijkste functies in de worker (handig om snel te vinden):
+    - Berichten/prompt opbouw: [maakBerichtenVoorOpenAi](api/chat/worker.php)
+    - system0 label ophalen: [haalAssistant0VoorBericht](api/chat/worker.php)
+    - system1 bouwen via includes: [bouwSystem1MetIncludes](api/chat/worker.php)
     - OpenAI call (met tools): [roepOpenAiAan](api/chat/worker.php#L188)
     - OpenAI call (system0, zonder tone): [roepOpenAiAanZonderTone](api/chat/worker.php#L263)
     - Model mode mapping: [CHAT_MODEL_MODE handling](api/chat/worker.php#L211)
@@ -67,8 +73,9 @@ Code-links in dit document zijn relatief (werken in GitHub én als je de repo lo
 ### Logs
 - Worker log:
   - Pad staat in worker configuratie (meestal `storage/logs/chat_worker.log` of vergelijkbaar).
-  - Handig om te checken of tools worden aangeroepen:
+  - Handig om te checken of functies worden aangeroepen:
     - “Functie aangeroepen: zoek_productvoorraad”
+    - “Functie aangeroepen: zoek_productaanraders”
     - “Functie aangeroepen: zoek_bestelling”
 
 ## 2) OpenAI aanroepen (modellen / instellingen)
@@ -166,9 +173,9 @@ Code-links in dit document zijn relatief (werken in GitHub én als je de repo lo
 - Bot zegt verkeerde bedrijfsinfo (retour/verzenden/openingstijden):
   - check de inhoud in [include/ChatGPT/](include/ChatGPT/) + [contact.inc](include/contact.inc#L27) + [time4.inc](include/time4.inc#L25)
   - check of system0 goed labelt in [system0.php](include/ChatGPT/system0.php#L4)
-- Bot gokt over voorraad/prijs:
-  - check worker log of `zoek_productvoorraad` wordt aangeroepen
-  - check tool forcing in [worker.php:L736](api/chat/worker.php#L736)
+- Bot gokt over voorraad/prijs of zegt ten onrechte “nee” bij genre-vragen:
+  - check worker log of `zoek_productvoorraad` of `zoek_productaanraders` wordt aangeroepen
+  - check [chat_functie_keuze.php](include/chat_functie_keuze.php) (herkent o.a. “lijken op”, “danspellen”, “Just Dance”)
 - Model/kwaliteit aanpassen:
   - zet `CHAT_MODEL_MODE=1` in `.env` (5.2) of `2` (5-mini) of `3` (4.1-mini)
 

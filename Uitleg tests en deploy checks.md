@@ -47,7 +47,11 @@ Test bestand: [tests/BestellingLookupTest.php](tests/BestellingLookupTest.php)
 - Track & trace code uit tekst halen (`haalTrackCodeUitTracktrace`)
 - Order lookup logica testen met een fake DB (`zoekBestellingRuw` + FakeConn)
 
-2) EmailDashboard helpers (`include/email_dashboard_helpers.php`)
+2) Chat functie-keuze (`include/chat_functie_keuze.php`)
+- `bepaalGeforceerdeFunctieKeuze`: beslist welke interne functie verplicht is (aanraders, voorraad, bestelling).
+- Tests in [ChatFunctieKeuzeTest.php](tests/ChatFunctieKeuzeTest.php) (o.a. “lijken op Xenoblade”, “danspellen?”, “geen Just Dance?”).
+
+3) EmailDashboard helpers (`include/email_dashboard_helpers.php`)
 - Helpers die je kunt testen zonder Gmail of login, zoals:
   - `formatteerBestandsgrootte`: zet bytes om naar tekst zoals `500 B`, `1,0 KB`, `1,5 MB`.
   - `normaliseerContentId`: haalt `<` en `>` weg uit een Content-ID, zodat `cid:` links matchen.
