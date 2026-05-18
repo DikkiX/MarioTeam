@@ -4,6 +4,7 @@ include_once $_SERVER['DOCUMENT_ROOT'] . '/include/db.inc';
 include_once $_SERVER['DOCUMENT_ROOT'] . '/include/bestelling_lookup.php';
 include_once $_SERVER['DOCUMENT_ROOT'] . '/include/chat_functie_keuze.php';
 include_once $_SERVER['DOCUMENT_ROOT'] . '/include/chat_product_zoek.php';
+include_once $_SERVER['DOCUMENT_ROOT'] . '/include/chat_geschiedenis.php';
 ignore_user_abort(true);
 set_time_limit(0);
 
@@ -367,8 +368,8 @@ function voerInterneFunctieUit($conn, $functieNaam, $arguments)
 
         $resultaat = [];
         try {
-            // We zoeken op titel of link en geven de beste matches terug.
-            $zoektermLike = '%' . $zoekterm . '%';
+            // Meerdere schrijfwijzen (bijv. dubbele punt in titel) zodat de database wél matcht.
+            $perLink = [];
             $stmt = $conn->prepare("
                 SELECT 
                     w.nr,
@@ -387,12 +388,29 @@ function voerInterneFunctieUit($conn, $functieNaam, $arguments)
                 ORDER BY w.aantal DESC, w.prijs ASC
                 LIMIT 5
             ");
-            $stmt->execute([
-                ':zoekterm_titel' => $zoektermLike,
-                ':zoekterm_link' => $zoektermLike,
-            ]);
-            $resultaat = $stmt->fetchAll();
-            $resultaat = is_array($resultaat) ? $resultaat : [];
+            foreach (maakProductZoektermVarianten($zoekterm) as $term) {
+                $zoektermLike = '%' . $term . '%';
+                $stmt->execute([
+                    ':zoekterm_titel' => $zoektermLike,
+                    ':zoekterm_link' => $zoektermLike,
+                ]);
+                $batch = $stmt->fetchAll();
+                if (!is_array($batch)) {
+                    continue;
+                }
+                foreach ($batch as $row) {
+                    $link = isset($row['link']) ? trim((string) $row['link']) : '';
+                    $sleutel = $link !== '' ? $link : (string) ($row['nr'] ?? '');
+                    if ($sleutel === '' || isset($perLink[$sleutel])) {
+                        continue;
+                    }
+                    $perLink[$sleutel] = $row;
+                    if (count($perLink) >= 5) {
+                        break 2;
+                    }
+                }
+            }
+            $resultaat = array_values($perLink);
         } catch (Throwable $e) {
             schrijfWorkerLog('zoek_productvoorraad fout: ' . $e->getMessage());
             return [
@@ -516,6 +534,19 @@ function voerInterneFunctieUit($conn, $functieNaam, $arguments)
             'gebruikte_zoektermen' => $gebruikteZoektermen,
             'resultaat' => $rows,
         ];
+    }
+
+    if ($functieNaam === 'controleer_voorraad_lijst') {
+        global $univ_web;
+        $basisUrl = '';
+        if (isset($univ_web) && is_string($univ_web) && $univ_web !== '') {
+            $basisUrl = 'https://www.' . $univ_web;
+        }
+        $context = isset($arguments['_gesprek_context']) && is_array($arguments['_gesprek_context'])
+            ? $arguments['_gesprek_context']
+            : [];
+
+        return controleerVoorraadUitGesprek($conn, $context, $basisUrl);
     }
 
     return [
@@ -732,7 +763,7 @@ function maakBerichtenVoorOpenAi($conn, $bericht, $assistant0Vooraf = null)
     global $univ_one, $univ_web, $univ_nin, $univ_web_text, $univ_mar, $univ_zoeken;
 
     // Korte regels over functies (voorraad zoeken) en Mr M-stijl.
-    $basisPrompt = 'Je bent een klantenservice assistent voor MarioSwitch.nl. Volg altijd de tone of voice uit sectie A (Mr M): enthousiast, uitroepen zoals Haha en Fantastisch, geen emoji. Als sectie B Verkoopadvies in je instructies staat: volg die volgorde (maximaal 5 korte vragen, 1 vraag per antwoord). Geef dan nog geen definitief productadvies tot de klant zegt: "Ik heb antwoord op al mijn vragen." Daarna gebruik je zoek_productaanraders met meerdere zoektermen uit het gesprek (woorden die in producttitels kunnen staan, NL en EN, geen verzonnen merken). Voor andere productvragen: gebruik functies voor live data; geef geen voorraad/prijzen op basis van aannames. Noem nooit exacte voorraadaantallen. Voor orderdata: bestelnummer + e-mail. Bij zoek_productaanraders: alleen titels uit resultaat noemen, in Mr M-stijl met links. Bij zoek_productvoorraad: alleen op voorraad ja/nee op basis van de functie. Bij weinig resultaten: opnieuw zoeken met andere zoektermen in een volgende functie-call, niet aan de klant vragen om te raden. Noem nooit zelf verzonnen titels of links.';
+    $basisPrompt = 'Je bent een klantenservice assistent voor MarioSwitch.nl. Volg altijd de tone of voice uit sectie A (Mr M): enthousiast, uitroepen zoals Haha en Fantastisch, geen emoji. Als sectie B Verkoopadvies in je instructies staat: volg die volgorde (maximaal 5 korte vragen, 1 vraag per antwoord). Geef dan nog geen definitief productadvies tot de klant zegt: "Ik heb antwoord op al mijn vragen." Daarna gebruik je zoek_productaanraders met meerdere zoektermen uit het gesprek (woorden die in producttitels kunnen staan, NL en EN, geen verzonnen merken). Voor andere productvragen: gebruik functies voor live data; geef geen voorraad/prijzen op basis van aannames. Noem nooit exacte voorraadaantallen. Voor orderdata: bestelnummer + e-mail. Bij zoek_productaanraders: alleen titels uit resultaat noemen, in Mr M-stijl met links. Bij zoek_productvoorraad: alleen op voorraad ja/nee op basis van de functie. Als de klant voorraad vraagt van spellen die jij net noemde: gebruik de verplichte voorraadcontrole uit het systeembericht; zeg nooit dat een genoemd product niet in de database staat. Bij weinig resultaten: opnieuw zoeken met andere zoektermen in een volgende functie-call, niet aan de klant vragen om te raden. Noem nooit zelf verzonnen titels of links.';
 
     // Stap 1: haal context (laatste afgeronde berichten) op uit de queue.
     $contextMessages = haalGespreksContextOp(
@@ -866,9 +897,25 @@ try {
     $messages = maakBerichtenVoorOpenAi($conn, $bericht, $assistant0);
     $tools = bouwToolsVoorOpenAi();
     $toolChoice = bepaalGeforceerdeFunctieKeuze($userMessage, $assistant0);
-    // Als de gebruiker naar voorraad/prijs vraagt willen we altijd live data ophalen
-    // via zoek_productvoorraad, zodat de bot niet gaat gokken.
-    if ($toolChoice === 'auto' && preg_match('/\b(op\s+voorraad|voorraad|beschikbaar|in\s+stock|prijs)\b/i', $userMessage) === 1) {
+
+    // Vervolgvraag “zijn ze op voorraad?”: check de shop-links uit het vorige bot-antwoord.
+    if (isVoorraadFollowUpVraag($userMessage)) {
+        global $univ_web;
+        $basisUrl = '';
+        if (isset($univ_web) && is_string($univ_web) && $univ_web !== '') {
+            $basisUrl = 'https://www.' . $univ_web;
+        }
+        $voorraadUitGesprek = controleerVoorraadUitGesprek($conn, $contextMessages, $basisUrl);
+        $messages[] = [
+            'role' => 'system',
+            'content' => 'Verplichte voorraadcontrole op eerder genoemde producten in dit gesprek. '
+                . 'Gebruik alleen deze data; zeg nooit dat een product niet in de database staat als het hier wel tussen staat. '
+                . 'Data: ' . json_encode($voorraadUitGesprek, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+        ];
+        $toolChoice = 'auto';
+        schrijfWorkerLog('Voorraad follow-up: ' . count($voorraadUitGesprek['resultaat'] ?? []) . ' product(en) uit gesprek gecontroleerd.');
+    } elseif ($toolChoice === 'auto' && preg_match('/\b(op\s+voorraad|voorraad|beschikbaar|in\s+stock|prijs)\b/i', $userMessage) === 1) {
+        // Algemene voorraadvraag: tool verplicht, maar niet bij “zijn ze op voorraad” (daar hebben we al data).
         $toolChoice = 'required';
     }
 
@@ -902,6 +949,10 @@ try {
             $directAntwoord = $assistantMessage['content'] ?? '';
             if (is_string($directAntwoord) && trim((string) $directAntwoord) !== '') {
                 updateChatQueueBericht($conn, $actiefBerichtId, 'completed', $directAntwoord);
+                $cookieVoorGeschiedenis = (string) ($bericht['cookie'] ?? '');
+                if ($cookieVoorGeschiedenis !== '') {
+                    voegBerichtToeAanChatGeschiedenis($conn, $cookieVoorGeschiedenis, 'bot', $directAntwoord);
+                }
                 schrijfWorkerLog('AI antwoord gemaakt (lengte ' . strlen((string) $directAntwoord) . ').');
                 break;
             }

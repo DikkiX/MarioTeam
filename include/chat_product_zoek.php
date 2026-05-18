@@ -204,3 +204,160 @@ function voegProductUrlsToeAanRijen(array $rows, string $basisUrl): array
 
     return $rows;
 }
+
+// Haalt product-slugs uit shop-URL’s in een tekst (bijv. …/Minecraft_Story_Mode).
+function haalProductLinksUitTekst(string $tekst): array
+{
+    $slugs = [];
+    if (preg_match_all('#(?:https?://)?(?:www\.)?marioswitch(?:1)?\.nl/([A-Za-z0-9_\-]+)#iu', $tekst, $matches) < 1) {
+        return [];
+    }
+
+    foreach ($matches[1] as $slug) {
+        $slug = trim((string) $slug);
+        if ($slug === '' || isset($slugs[$slug])) {
+            continue;
+        }
+        $slugs[$slug] = $slug;
+    }
+
+    return array_values($slugs);
+}
+
+// Maakt varianten van een zoekterm (bijv. dubbele punt weg) zodat LIKE beter matcht.
+function maakProductZoektermVarianten(string $zoekterm): array
+{
+    $zoekterm = trim($zoekterm);
+    if ($zoekterm === '') {
+        return [];
+    }
+
+    $varianten = [$zoekterm];
+    $zonderInterpunctie = preg_replace('/[:\-–—]+/u', ' ', $zoekterm);
+    $zonderInterpunctie = preg_replace('/\s+/u', ' ', trim((string) $zonderInterpunctie));
+    if ($zonderInterpunctie !== '' && $zonderInterpunctie !== $zoekterm) {
+        $varianten[] = $zonderInterpunctie;
+    }
+
+    $uniek = [];
+    foreach ($varianten as $v) {
+        $sleutel = function_exists('mb_strtolower') ? mb_strtolower($v, 'UTF-8') : strtolower($v);
+        $uniek[$sleutel] = $v;
+    }
+
+    return array_values($uniek);
+}
+
+// Zoekt 1 product op titel of link (meerdere term-varianten).
+function zoekProductOpZoekterm(PDO $conn, string $zoekterm): ?array
+{
+    $varianten = maakProductZoektermVarianten($zoekterm);
+    if (empty($varianten)) {
+        return null;
+    }
+
+    $stmt = $conn->prepare("
+        SELECT
+            w.nr,
+            w.titel,
+            w.link,
+            w.prijs,
+            w.sentence,
+            CASE WHEN w.aantal > 0 THEN 'ja' ELSE 'nee' END AS op_voorraad
+        FROM Winkel w
+        WHERE w.titel LIKE :zoekterm_titel OR w.link LIKE :zoekterm_link
+        ORDER BY w.aantal DESC, w.prijs ASC
+        LIMIT 1
+    ");
+
+    foreach ($varianten as $term) {
+        $like = '%' . $term . '%';
+        $stmt->execute([
+            ':zoekterm_titel' => $like,
+            ':zoekterm_link' => $like,
+        ]);
+        $rij = $stmt->fetch();
+        if (is_array($rij) && !empty($rij['titel'])) {
+            return $rij;
+        }
+    }
+
+    return null;
+}
+
+// Zoekt 1 product op de slug uit de shop-link (betrouwbaarst na een aanbeveling).
+function zoekProductOpLinkSlug(PDO $conn, string $slug): ?array
+{
+    $slug = trim($slug);
+    if ($slug === '') {
+        return null;
+    }
+
+    $like = '%' . $slug . '%';
+    $stmt = $conn->prepare("
+        SELECT
+            w.nr,
+            w.titel,
+            w.link,
+            w.prijs,
+            w.sentence,
+            CASE WHEN w.aantal > 0 THEN 'ja' ELSE 'nee' END AS op_voorraad
+        FROM Winkel w
+        WHERE w.link LIKE :zoekterm_link
+        ORDER BY w.aantal DESC, w.prijs ASC
+        LIMIT 1
+    ");
+    $stmt->execute([':zoekterm_link' => $like]);
+    $rij = $stmt->fetch();
+
+    return is_array($rij) && !empty($rij['titel']) ? $rij : null;
+}
+
+// Leest de laatste bot-antwoorden en controleert voorraad per genoemde shop-link.
+function controleerVoorraadUitGesprek(PDO $conn, array $contextMessages, string $basisUrl = ''): array
+{
+    $teksten = [];
+    foreach ($contextMessages as $bericht) {
+        if (!is_array($bericht) || ($bericht['role'] ?? '') !== 'assistant') {
+            continue;
+        }
+        $inhoud = trim((string) ($bericht['content'] ?? ''));
+        if ($inhoud !== '') {
+            $teksten[] = $inhoud;
+        }
+    }
+
+    // Nieuwste bot-berichten eerst (meest recente aanbeveling).
+    $teksten = array_reverse($teksten);
+    $gezien = [];
+    $producten = [];
+
+    foreach ($teksten as $tekst) {
+        $slugs = haalProductLinksUitTekst($tekst);
+        foreach ($slugs as $slug) {
+            if (isset($gezien[$slug])) {
+                continue;
+            }
+            $gezien[$slug] = true;
+            $rij = zoekProductOpLinkSlug($conn, $slug);
+            if ($rij === null) {
+                continue;
+            }
+            if ($basisUrl !== '') {
+                $metUrl = voegProductUrlsToeAanRijen([$rij], $basisUrl);
+                $rij = $metUrl[0] ?? $rij;
+            }
+            $producten[] = $rij;
+        }
+    }
+
+    return [
+        'functie' => 'controleer_voorraad_lijst',
+        'gevonden' => !empty($producten),
+        'status' => empty($producten) ? 'geen_producten_in_gesprek' : 'gecontroleerd',
+        'message' => empty($producten)
+            ? 'Geen shop-links gevonden in eerdere antwoorden. Vraag de klant welke titels bedoeld worden.'
+            : 'Voorraad gecontroleerd op basis van producten die eerder in dit gesprek zijn genoemd.',
+        'resultaat' => $producten,
+    ];
+}

@@ -96,11 +96,16 @@ header('X-Robots-Tag: noindex, nofollow', true);
         }
 
         .message-time {
-            position: absolute;
-            bottom: 5px;
-            right: 10px;
-            font-size: 12px;
-            color: #888;
+            display: block;
+            margin-top: 6px;
+            font-size: 11px;
+            color: #555;
+            text-align: right;
+        }
+
+        .chat-message.user .message-time,
+        .chat-message.bot .message-time {
+            text-align: right;
         }
 
         /*
@@ -140,11 +145,15 @@ header('X-Robots-Tag: noindex, nofollow', true);
             background-color: #00d501;
             color: #000;
             border: 1px solid #0093e1;
-            padding: 10px 15px 20px 15px;
+            padding: 10px 15px 12px 15px;
             border-radius: 10px;
             max-width: 70%;
             align-self: flex-end;
-            position: relative;
+        }
+
+        .chat-message.user p {
+            margin: 0;
+            padding-right: 0;
         }
 
         /* Botberichten: Links uitlijnen */
@@ -156,11 +165,14 @@ header('X-Robots-Tag: noindex, nofollow', true);
             background-color: #ffc901;
             color: #000;
             border: 1px solid #0093e1;
-            padding: 10px 15px 20px 15px;
+            padding: 10px 15px 12px 15px;
             border-radius: 10px;
             max-width: 70%;
             align-self: flex-start;
-            position: relative;
+        }
+
+        .chat-message.bot p {
+            margin: 0;
         }
 
         .chat-message.system {
@@ -555,8 +567,8 @@ header('X-Robots-Tag: noindex, nofollow', true);
             const now = new Date();
             time.textContent = now.getHours().toString().padStart(2, '0') + ':' + now.getMinutes().toString().padStart(2, '0');
 
-            paragraph.appendChild(time);
             wrapper.appendChild(paragraph);
+            wrapper.appendChild(time);
 
             return wrapper;
         }

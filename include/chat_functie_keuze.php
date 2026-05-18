@@ -115,3 +115,24 @@ function bepaalGeforceerdeFunctieKeuze(string $berichtTekst, string $assistant0 
 
     return 'auto';
 }
+
+// Vervolgvraag: klant vraagt voorraad van spellen die net in het gesprek stonden.
+function isVoorraadFollowUpVraag(string $berichtTekst): bool
+{
+    $t = trim($berichtTekst);
+    if ($t === '') {
+        return false;
+    }
+
+    $heeftVoorraadWoord = preg_match(
+        '/\b(op\s+voorraad|voorraad|beschikbaar|in\s+stock|nog\s+te\s+koop|hebben\s+jullie\s+(die|ze|hem|haar|het))\b/i',
+        $t
+    ) === 1;
+
+    $verwijstNaarEerder = preg_match(
+        '/\b(ze|die|deze|allemaal|alle\s+drie|beide|genoemde|die\s+games|die\s+spellen|dat\s+spel|die\s+titels)\b/i',
+        $t
+    ) === 1;
+
+    return $heeftVoorraadWoord && $verwijstNaarEerder;
+}

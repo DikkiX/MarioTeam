@@ -50,4 +50,10 @@ final class ChatFunctieKeuzeTest extends TestCase
         $keuze = bepaalGeforceerdeFunctieKeuze('Ik heb antwoord op al mijn vragen.', 'ProductFinder');
         $this->assertSame('zoek_productaanraders', $this->functieNaamUitKeuze($keuze));
     }
+
+    public function testVoorraadFollowUpWordtHerkend(): void
+    {
+        $this->assertTrue(isVoorraadFollowUpVraag('zijn ze allemaal op voorraad'));
+        $this->assertFalse(isVoorraadFollowUpVraag('hebben jullie danspellen?'));
+    }
 }

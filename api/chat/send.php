@@ -1,5 +1,6 @@
 <?php
 include_once $_SERVER['DOCUMENT_ROOT'] . '/include/db.inc';
+include_once $_SERVER['DOCUMENT_ROOT'] . '/include/chat_geschiedenis.php';
 $conn = isset($conn) ? $conn : null;
 
 // Dit endpoint slaat 1 chatbericht op en start daarna de worker.
@@ -192,6 +193,8 @@ try {
     ]);
 
     $berichtId = (int) $conn->lastInsertId();
+
+    voegBerichtToeAanChatGeschiedenis($conn, $cookie, 'user', $userMessage);
 
     // Dit start de worker op de achtergrond.
     // Als dit mislukt, blijft het endpoint wel gewoon een response geven.

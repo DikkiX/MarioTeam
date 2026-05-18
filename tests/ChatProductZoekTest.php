@@ -28,4 +28,20 @@ final class ChatProductZoekTest extends TestCase
 
         $this->assertSame(['jrpg', 'xenoblade', 'rpg'], $termen);
     }
+
+    public function testHaaltShopLinksUitBotTekst(): void
+    {
+        $tekst = 'Kijk https://www.marioswitch.nl/Minecraft_Story_Mode_-_The_Complete_Adventure en Mario.';
+        $slugs = haalProductLinksUitTekst($tekst);
+
+        $this->assertContains('Minecraft_Story_Mode_-_The_Complete_Adventure', $slugs);
+    }
+
+    public function testZoektermVariantVerwijdertDubbelePunt(): void
+    {
+        $varianten = maakProductZoektermVarianten('Minecraft: Story Mode');
+
+        $this->assertContains('Minecraft: Story Mode', $varianten);
+        $this->assertContains('Minecraft Story Mode', $varianten);
+    }
 }
