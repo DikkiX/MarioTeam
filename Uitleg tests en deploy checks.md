@@ -48,10 +48,18 @@ Test bestand: [tests/BestellingLookupTest.php](tests/BestellingLookupTest.php)
 - Order lookup logica testen met een fake DB (`zoekBestellingRuw` + FakeConn)
 
 2) Chat functie-keuze (`include/chat_functie_keuze.php`)
-- `bepaalGeforceerdeFunctieKeuze`: beslist welke interne functie verplicht is (aanraders, voorraad, bestelling).
-- Tests in [ChatFunctieKeuzeTest.php](tests/ChatFunctieKeuzeTest.php) (o.a. “lijken op Xenoblade”, “danspellen?”, “geen Just Dance?”).
+- [bepaalGeforceerdeFunctieKeuze](include/chat_functie_keuze.php): kiest of de bot verplicht in de database moet zoeken.
+- Bij ProductFinder: geeft `auto` terug (eerst 5 vragen, geen database forceren).
+- Na “Ik heb antwoord op al mijn vragen”: geeft `zoek_productaanraders` terug.
+- Tests: [ChatFunctieKeuzeTest.php](tests/ChatFunctieKeuzeTest.php)
 
-3) EmailDashboard helpers (`include/email_dashboard_helpers.php`)
+3) Chat product-zoeken (`include/chat_product_zoek.php`)
+- [haalZoektermenUitToolArgs](include/chat_product_zoek.php): leest zoekwoorden uit de tool-call.
+- [breidZoektermenUitVoorDatabase](include/chat_product_zoek.php): maakt zoekwoorden iets breder (bijv. dans → dance).
+- [zoekAanradersInDatabase](include/chat_product_zoek.php): zoekt in Winkel (alleen op voorraad).
+- Tests: [ChatProductZoekTest.php](tests/ChatProductZoekTest.php)
+
+4) EmailDashboard helpers (`include/email_dashboard_helpers.php`)
 - Helpers die je kunt testen zonder Gmail of login, zoals:
   - `formatteerBestandsgrootte`: zet bytes om naar tekst zoals `500 B`, `1,0 KB`, `1,5 MB`.
   - `normaliseerContentId`: haalt `<` en `>` weg uit een Content-ID, zodat `cid:` links matchen.
@@ -87,6 +95,8 @@ Welke bestanden meetellen voor coverage staat in: [phpunit.xml](phpunit.xml)
 Op dit moment tellen deze bestanden mee:
 - `include/bestelling_lookup.php`
 - `include/email_dashboard_helpers.php`
+- `include/chat_functie_keuze.php`
+- `include/chat_product_zoek.php`
 
 ## Waarom we niet alles met echte DB/Gmail testen in unit tests
 

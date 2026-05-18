@@ -3,6 +3,7 @@ include_once $_SERVER['DOCUMENT_ROOT'] . '/include/db.inc';
 // Gedeelde order-lookup (wordt ook door EmailDashboard gebruikt).
 include_once $_SERVER['DOCUMENT_ROOT'] . '/include/bestelling_lookup.php';
 include_once $_SERVER['DOCUMENT_ROOT'] . '/include/chat_functie_keuze.php';
+include_once $_SERVER['DOCUMENT_ROOT'] . '/include/chat_product_zoek.php';
 ignore_user_abort(true);
 set_time_limit(0);
 
@@ -163,17 +164,22 @@ function bouwToolsVoorOpenAi()
         [
             'type' => 'function',
             'function' => [
-                // Nieuwe tool om de "random suggesties" bug te voorkomen:
-                // aanraders/alternatieven moeten altijd uit de echte database komen (en op voorraad zijn),
-                // anders lijkt het alsof de voorraadchecker niet werkt.
+                // Aanraders: alleen producten die echt in Winkel staan (aantal > 0).
                 'name' => 'zoek_productaanraders',
-                'description' => 'Zoek live producten die op voorraad zijn (aanraders/alternatieven). Gebruik zoekterm op genre (RPG, dans, race, party), niet alleen op een exacte gamenaam. Gebruik dit om alleen producten te noemen die echt in de database staan en op voorraad zijn.',
+                'description' => 'Zoek live producten op voorraad. Geef 3-6 zoektermen die in titels/omschrijvingen kunnen staan (bij danspellen: dans, dance, danser, party — niet alleen bekende merken). Alleen producten uit resultaat noemen.',
                 'parameters' => [
                     'type' => 'object',
                     'properties' => [
+                        'zoektermen' => [
+                            'type' => 'array',
+                            'items' => [
+                                'type' => 'string',
+                            ],
+                            'description' => 'Lijst met zoekwoorden, bijv. ["dans","dance","just dance"] of ["rpg","jrpg"]. Gebruik 2 tot 5 termen bij genre-vragen.',
+                        ],
                         'zoekterm' => [
                             'type' => 'string',
-                            'description' => 'Zoekwoord voor titel/omschrijving (bijv. RPG, Mario, Zelda). Leeg = algemene aanraders.',
+                            'description' => 'Optioneel: één zoekwoord (oud veld). Liever zoektermen gebruiken.',
                         ],
                         'max_results' => [
                             'type' => 'integer',
@@ -452,12 +458,8 @@ function voerInterneFunctieUit($conn, $functieNaam, $arguments)
     }
 
     if ($functieNaam === 'zoek_productaanraders') {
+        // Zoeken zelf gebeurt in include/chat_product_zoek.php.
         global $univ_web;
-        // Dit is de "aanrader/alternatief" lookup:
-        // - geeft alleen producten terug die echt bestaan in Winkel
-        // - en waar aantal > 0 (dus op voorraad)
-        // Zo voorkomen we dat de bot titels verzint of links geeft naar niet-bestaande producten.
-        $zoekterm = isset($arguments['zoekterm']) ? trim((string) $arguments['zoekterm']) : '';
         $max = isset($arguments['max_results']) ? (int) $arguments['max_results'] : 5;
         if ($max < 1) {
             $max = 1;
@@ -471,37 +473,18 @@ function voerInterneFunctieUit($conn, $functieNaam, $arguments)
             $basisUrl = 'https://www.' . $univ_web;
         }
 
+        $zoektermen = haalZoektermenUitToolArgs($arguments);
         $rows = [];
+        $gebruikteZoektermen = [];
+
         try {
-            if ($zoekterm !== '') {
-                // Met zoekterm zoeken we ook in sentence, zodat "RPG" of "Zelda" vaker matcht.
-                $like = '%' . $zoekterm . '%';
-                $stmt = $conn->prepare("
-                    SELECT w.nr, w.titel, w.link, w.prijs, w.sentence
-                    FROM Winkel w
-                    WHERE w.aantal > 0
-                      AND (w.titel LIKE :t_titel OR w.link LIKE :t_link OR w.sentence LIKE :t_sentence)
-                    ORDER BY w.aantal DESC, w.prijs ASC
-                    LIMIT " . (int) $max . "
-                ");
-                $stmt->bindValue(':t_titel', $like, PDO::PARAM_STR);
-                $stmt->bindValue(':t_link', $like, PDO::PARAM_STR);
-                $stmt->bindValue(':t_sentence', $like, PDO::PARAM_STR);
-                $stmt->execute();
-                $rows = $stmt->fetchAll();
+            if (!empty($zoektermen)) {
+                $zoekResultaat = zoekAanradersInDatabase($conn, $zoektermen, $max, $max);
+                $rows = $zoekResultaat['rijen'] ?? [];
+                $gebruikteZoektermen = $zoekResultaat['gebruikte_zoektermen'] ?? [];
             } else {
-                // Zonder zoekterm: geef algemene aanraders op basis van voorraad/prijs.
-                $stmt = $conn->prepare("
-                    SELECT w.nr, w.titel, w.link, w.prijs, w.sentence
-                    FROM Winkel w
-                    WHERE w.aantal > 0
-                    ORDER BY w.aantal DESC, w.prijs ASC
-                    LIMIT " . (int) $max . "
-                ");
-                $stmt->execute();
-                $rows = $stmt->fetchAll();
+                $rows = haalAlgemeneAanradersUitDatabase($conn, $max);
             }
-            $rows = is_array($rows) ? $rows : [];
         } catch (Throwable $e) {
             schrijfWorkerLog('zoek_productaanraders fout: ' . $e->getMessage());
             return [
@@ -512,35 +495,16 @@ function voerInterneFunctieUit($conn, $functieNaam, $arguments)
                 'resultaat' => [],
             ];
         }
-        if ($basisUrl !== '' && !empty($rows)) {
-            // Maak van relative links een volledige product_url.
-            foreach ($rows as $idx => $row) {
-                $link = isset($row['link']) ? trim((string) $row['link']) : '';
-                if ($link === '') {
-                    continue;
-                }
 
-                if (preg_match('/^https?:\/\//i', $link) === 1) {
-                    $rows[$idx]['product_url'] = $link;
-                    continue;
-                }
-
-                if (preg_match('/^www\./i', $link) === 1) {
-                    $rows[$idx]['product_url'] = 'https://' . $link;
-                    continue;
-                }
-
-                $rows[$idx]['product_url'] = $basisUrl . '/' . ltrim($link, '/');
-            }
-        }
+        $rows = voegProductUrlsToeAanRijen($rows, $basisUrl);
 
         if (empty($rows)) {
-            // Geen resultaten = bot moet geen games gaan verzinnen, maar dit netjes terugkoppelen.
             return [
                 'functie' => 'zoek_productaanraders',
                 'gevonden' => false,
                 'status' => 'geen_resultaten',
-                'message' => 'Geen aanraders gevonden die nu op voorraad zijn.',
+                'message' => 'Geen aanraders op voorraad voor deze zoektermen. Noem geen producten die niet in resultaat staan.',
+                'gebruikte_zoektermen' => $gebruikteZoektermen,
                 'resultaat' => [],
             ];
         }
@@ -549,6 +513,7 @@ function voerInterneFunctieUit($conn, $functieNaam, $arguments)
             'functie' => 'zoek_productaanraders',
             'gevonden' => true,
             'status' => 'gevonden',
+            'gebruikte_zoektermen' => $gebruikteZoektermen,
             'resultaat' => $rows,
         ];
     }
@@ -683,10 +648,8 @@ function bepaalPlatformUitAssistant0($assistant0, $fallback)
     return (string) $fallback;
 }
 
-// Bouwt de system prompt op met bestaande include-files.
-// Belangrijk: we kopiëren geen grote tekstblokken uit ChatGptMrM.php,
-// we gebruiken de bestaande FAQ arrays uit include/ChatGPT/*.php.
-function bouwSystem1MetIncludes($assistant0, $platform)
+// Bouwt de system prompt op (Mr M, FAQ, verkoopvragen, …). Zelfde idee als ChatGptMrM.php.
+function bouwSystem1MetIncludes($assistant0, $platform, $userMessage = '')
 {
     global $univ_one, $univ_web, $univ_nin, $univ_web_text, $univ_mar, $univ_zoeken;
 
@@ -697,6 +660,27 @@ function bouwSystem1MetIncludes($assistant0, $platform)
     $system1 = $systemMrM;
     if (preg_match("/Persoonlijk/i", (string) $assistant0)) {
         $system1 .= $systemMrmPersoonlijk;
+    }
+
+    // Als system0 “ProductFinder” zegt: laad de 5 verkoopvragen (VerkoopAdvies3).
+    if (preg_match("/ProductFinder/i", (string) $assistant0)) {
+        include_once $_SERVER['DOCUMENT_ROOT'] . '/include/ChatGPT/VerkoopAdvies3.php';
+        $systemAdviesVragen = isset($systemAdviesVragen) ? (string) $systemAdviesVragen : '';
+        if ($systemAdviesVragen !== '') {
+            $system1 .= "\n\n" . stripHtmlNaarTekst($systemAdviesVragen);
+        }
+    }
+
+    // Na “Ik heb antwoord op al mijn vragen” mag de AI producten uit de shop kiezen (ProductList).
+    $toonProductLijst = preg_match('/ik heb antwoord op al mijn vragen/i', (string) $userMessage) === 1;
+    if ($toonProductLijst || preg_match("/ProductList/i", (string) $assistant0)) {
+        if (preg_match("/Switch/i", (string) $assistant0) || (string) $platform === 'Switch') {
+            include_once $_SERVER['DOCUMENT_ROOT'] . '/include/ChatGPT/ProductList.php';
+            $systemList = isset($systemList) ? (string) $systemList : '';
+            if ($systemList !== '') {
+                $system1 .= "\n\n" . stripHtmlNaarTekst($systemList);
+            }
+        }
     }
 
     $FAQ = [];
@@ -742,13 +726,13 @@ function bouwSystem1MetIncludes($assistant0, $platform)
     return $system1;
 }
 
-// Dit maakt het gesprek voor OpenAI.
-// Eerst voegen we wat eerdere context toe en daarna de nieuwste vraag.
-function maakBerichtenVoorOpenAi($conn, $bericht)
+// Maakt de berichtenlijst voor OpenAI (instructies + oude chat + nieuwe vraag).
+function maakBerichtenVoorOpenAi($conn, $bericht, $assistant0Vooraf = null)
 {
     global $univ_one, $univ_web, $univ_nin, $univ_web_text, $univ_mar, $univ_zoeken;
 
-    $basisPrompt = 'Je bent een klantenservice assistent voor MarioSwitch.nl. Als je live data nodig hebt, gebruik je een functie. Geef geen data op basis van aannames als een functie nodig is. Noem nooit exacte voorraadaantallen aan klanten. Zeg alleen of iets op voorraad is of niet. Voor orderdata moet de klant eerst zowel een bestelnummer als het juiste e-mailadres geven. Als je via zoek_bestelling artikelen terugkrijgt en artikelen_gevonden true is, presenteer die als een nette lijst met per regel: "{aantal}x {productnaam} — {prijs} euro" (als prijs bekend is). Toon daarna altijd: "Verzendkosten: X euro" en "Totaal: Y euro" op basis van resultaat.verzendkosten en resultaat.totaal. Als artikelen_gevonden false is, zeg dan dat je de artikelregels nu niet kunt ophalen (en claim niet dat er geen artikelen zijn). Voor verzenden: gebruik resultaat.verzend_status (verzonden/niet_verzonden). Als resultaat.track_code gevuld is, toon die. Als track_code leeg is, zeg dat er (nog) geen track&trace code beschikbaar is. Bij bezorgtijden/verzenden/verzendkosten: gebruik alleen de info uit de FAQ die je hebt gekregen. Noem geen zelfbedachte levertijden zoals "1 tot 3 werkdagen". Als er geen exacte belofte staat, zeg dat het meestal de volgende werkdag is (bij bestelling voor 18:00), maar dat er geen 100% garantie is. Als de gebruiker vraagt of een game op voorraad is (of vraagt naar prijs/voorraad), roep altijd de functie zoek_productvoorraad aan en baseer je antwoord alleen op die uitkomst. Bij de uitkomst van zoek_productvoorraad geldt: als gevonden=false of status="niet_in_database", zeg dan dat het product op dit moment niet in het assortiment staat (dus nu niet verkocht wordt) en vraag eventueel om een link/andere zoekterm. Als status="niet_op_voorraad", zeg dat het product nu niet op voorraad is en dat het later weer kan terugkomen. Als status="op_voorraad", zeg dat het op voorraad is. Gebruik product_url als je een link wilt geven. Zeg nooit: "als er een prijs op de website staat is het op voorraad" en leid voorraad ook niet af van prijs; vertrouw alleen op zoek_productvoorraad. Zeg ook niet dat je het "voorraad aantal" niet kunt ophalen; zeg dat je alleen op voorraad ja/nee kunt geven. Als de gebruiker om aanraders/vergelijkbare games vraagt, noem dan alleen titels die je live hebt opgehaald via zoek_productaanraders. Gebruik als zoekterm een genre (RPG, dans, race, party), niet alleen de exacte gamenaam. Als zoeken op de gamenaam geen resultaten geeft, probeer opnieuw met een passend genre voordat je zegt dat er niets is. Noem nooit zelf verzonnen titels of links.';
+    // Korte regels over functies (voorraad zoeken) en Mr M-stijl.
+    $basisPrompt = 'Je bent een klantenservice assistent voor MarioSwitch.nl. Volg altijd de tone of voice uit sectie A (Mr M): enthousiast, uitroepen zoals Haha en Fantastisch, geen emoji. Als sectie B Verkoopadvies in je instructies staat: volg die volgorde (maximaal 5 korte vragen, 1 vraag per antwoord). Geef dan nog geen definitief productadvies tot de klant zegt: "Ik heb antwoord op al mijn vragen." Daarna gebruik je zoek_productaanraders met meerdere zoektermen uit het gesprek (woorden die in producttitels kunnen staan, NL en EN, geen verzonnen merken). Voor andere productvragen: gebruik functies voor live data; geef geen voorraad/prijzen op basis van aannames. Noem nooit exacte voorraadaantallen. Voor orderdata: bestelnummer + e-mail. Bij zoek_productaanraders: alleen titels uit resultaat noemen, in Mr M-stijl met links. Bij zoek_productvoorraad: alleen op voorraad ja/nee op basis van de functie. Bij weinig resultaten: opnieuw zoeken met andere zoektermen in een volgende functie-call, niet aan de klant vragen om te raden. Noem nooit zelf verzonnen titels of links.';
 
     // Stap 1: haal context (laatste afgeronde berichten) op uit de queue.
     $contextMessages = haalGespreksContextOp(
@@ -757,13 +741,16 @@ function maakBerichtenVoorOpenAi($conn, $bericht)
         (int) ($bericht['id'] ?? 0)
     );
 
-    // Stap 2: draai system0 om onderwerp + platform te bepalen.
-    $assistant0 = haalAssistant0VoorBericht($contextMessages, (string) ($bericht['user_message'] ?? ''));
+    $userMessage = (string) ($bericht['user_message'] ?? '');
+
+    // Stap 2: system0 bepaalt onderwerp (bijv. ProductFinder, Zending) + platform.
+    $assistant0 = is_string($assistant0Vooraf) && $assistant0Vooraf !== ''
+        ? $assistant0Vooraf
+        : haalAssistant0VoorBericht($contextMessages, $userMessage);
     $platform = bepaalPlatformUitAssistant0($assistant0, isset($univ_one) ? (string) $univ_one : '');
 
-    // Stap 3: bouw system1 op met tone-of-voice + relevante FAQ/contact info.
-    // Dit zorgt dat de bot niet hoeft te gokken over bedrijfsinfo.
-    $system1 = bouwSystem1MetIncludes($assistant0, $platform);
+    // Stap 3: bouw system1 op met tone-of-voice + verkoopadvies + FAQ/contact.
+    $system1 = bouwSystem1MetIncludes($assistant0, $platform, $userMessage);
     $systemPrompt = $basisPrompt . "\n\n" . $system1;
 
     $messages = [
@@ -867,10 +854,18 @@ try {
     // Vanaf hier gaat het bericht echt naar OpenAI.
     schrijfWorkerLog('Bericht ' . $bericht['id'] . ' is op processing gezet.');
 
-    $messages = maakBerichtenVoorOpenAi($conn, $bericht);
-    $tools = bouwToolsVoorOpenAi();
+    // Eerst system0 (welk onderwerp is dit bericht?).
     $userMessage = (string) ($bericht['user_message'] ?? '');
-    $toolChoice = bepaalGeforceerdeFunctieKeuze($userMessage);
+    $contextMessages = haalGespreksContextOp(
+        $conn,
+        (string) ($bericht['cookie'] ?? ''),
+        (int) ($bericht['id'] ?? 0)
+    );
+    $assistant0 = haalAssistant0VoorBericht($contextMessages, $userMessage);
+
+    $messages = maakBerichtenVoorOpenAi($conn, $bericht, $assistant0);
+    $tools = bouwToolsVoorOpenAi();
+    $toolChoice = bepaalGeforceerdeFunctieKeuze($userMessage, $assistant0);
     // Als de gebruiker naar voorraad/prijs vraagt willen we altijd live data ophalen
     // via zoek_productvoorraad, zodat de bot niet gaat gokken.
     if ($toolChoice === 'auto' && preg_match('/\b(op\s+voorraad|voorraad|beschikbaar|in\s+stock|prijs)\b/i', $userMessage) === 1) {

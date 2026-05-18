@@ -16,7 +16,8 @@ Dit is de codebase van Mario Team (o.a. de chat op de website + het e-maildashbo
 - `api/` = echte endpoints (URL’s) die je aanroept vanuit de browser of via HTTP.
 - `include/` = gedeelde helpers/includes die je in meerdere scripts hergebruikt (geen endpoints).
 - Gedeelde order lookup (chat + e-mail): [include/bestelling_lookup.php](include/bestelling_lookup.php)
-- Chat: welke functie verplicht is bij productvragen: [include/chat_functie_keuze.php](include/chat_functie_keuze.php)
+- Chat: welke database-functie verplicht is: [include/chat_functie_keuze.php](include/chat_functie_keuze.php)
+- Chat: producten zoeken in Winkel: [include/chat_product_zoek.php](include/chat_product_zoek.php)
 
 ## Belangrijkste instellingen
 

@@ -1,24 +1,41 @@
 <?php
 
-// Dit bestand bepaalt welke "interne functie" de chatbot MOET gebruiken.
-// Doel: de bot niet laten gokken bij vragen over spellen/voorraad, maar altijd eerst de database checken.
+// Dit bestand kiest welke “functie” de chatbot verplicht moet gebruiken.
+// Het wordt gebruikt door:
+// - api/chat/worker.php (vlak vóór de OpenAI-call)
 //
-// Wordt gebruikt door:
-// - api/chat/worker.php (vóór de OpenAI-call)
-//
-// Teruggeeft:
-// - 'auto' = OpenAI mag zelf kiezen
-// - of een array met 1 vaste functienaam (zoek_productaanraders, zoek_productvoorraad, zoek_bestelling)
+// Doel: de bot niet laten gokken over voorraad of spellen.
+// Maar bij ProductFinder eerst wél de oude stappen (5 vragen), en pas daarna de database.
 
-// Kijkt naar de tekst van de klant en beslist: welke functie moet verplicht worden?
-function bepaalGeforceerdeFunctieKeuze(string $berichtTekst)
+// Kijkt naar het bericht van de klant + het label uit system0.
+// Geeft terug: 'auto' (AI mag zelf kiezen) of 1 vaste functienaam.
+function bepaalGeforceerdeFunctieKeuze(string $berichtTekst, string $assistant0 = '')
 {
     $t = trim($berichtTekst);
     if ($t === '') {
         return 'auto';
     }
 
-    // 1) Bestelling: als er bestelnummer + e-mail in de tekst staat → zoek_bestelling.
+    // system0 kan “ProductFinder” teruggeven = klant zoekt nog een game (orienterend).
+    $isProductFinder = preg_match('/ProductFinder/i', $assistant0) === 1;
+    // Na de 5 vragen zegt de klant dit. Dan mag er gezocht worden in Winkel.
+    $klaarMetVragen = preg_match('/ik heb antwoord op al mijn vragen/i', $t) === 1;
+
+    if ($klaarMetVragen) {
+        return [
+            'type' => 'function',
+            'function' => [
+                'name' => 'zoek_productaanraders',
+            ],
+        ];
+    }
+
+    // Tijdens ProductFinder: geen database forceren. Eerst Mr M + verkoopvragen (VerkoopAdvies3).
+    if ($isProductFinder) {
+        return 'auto';
+    }
+
+    // Bestelling: bestelnummer + e-mail in het bericht → zoek_bestelling.
     $heeftBestelWoord = preg_match('/bestelling|bestelnummer|order|status|inhoud|artikelen|orderregels|wat heb ik besteld|wat zit er/i', $t) === 1;
     $heeftEmail = preg_match('/[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}/i', $t) === 1;
     $heeftBestelnummer = preg_match('/\b\d+\b/', $t) === 1;
@@ -32,7 +49,7 @@ function bepaalGeforceerdeFunctieKeuze(string $berichtTekst)
         ];
     }
 
-    // 2) Vergelijkbare spellen / aanraders (bijv. "lijken op Xenoblade", "soortgelijke games").
+    // Vergelijkbare spellen (bijv. “lijken op Xenoblade”).
     $vraagtOmAanraders = preg_match(
         '/\b(aanraden|aanrader|suggest|suggestie|alternatief|soortgelijk|gelijke|vergelijkbaar|vergelijkbare|andere\s+games|andere\s+spellen)\b/i',
         $t
@@ -51,8 +68,7 @@ function bepaalGeforceerdeFunctieKeuze(string $berichtTekst)
         ];
     }
 
-    // 3) Eén concrete titel (bijv. "hebben jullie geen Just Dance?").
-    // Dit moet VÓÓR genre-detectie, anders pakt "dance" in Just Dance het verkeerde pad.
+    // Eén bekende titel (bijv. “hebben jullie Just Dance?”) → zoek_productvoorraad.
     $vraagtOmAssortiment = preg_match(
         '/\b(heb\s+je|hebben\s+jullie|verkopen\s+jullie|hebben\s+jullie\s+ook|is\s+er|staat\s+.+\s+op\s+voorraad)\b/i',
         $t
@@ -71,8 +87,7 @@ function bepaalGeforceerdeFunctieKeuze(string $berichtTekst)
         ];
     }
 
-    // 4) Genre-vragen (bijv. "danspellen?" — één woord, één s: dans+pellen, niet "dansspellen").
-    // Let op: \bdans\b matcht NIET in "danspellen", daarom ook losse woorden als danspellen|racespellen.
+    // Genre-vragen (bijv. “danspellen?” — schrijf: danspellen, niet dansspellen).
     $heeftGenreWoord = preg_match(
         '/(?:race|racing|autos?|kart|mario\s*kart|dans|dance|just\s*dance|danspellen|racespellen|partyspellen|rpg|jrpg|avontuur|actie|shooter|schiet|puzzel|party|multiplayer|co-?op|sport|voetbal|basketbal|horror|strategy|strategie|xenoblade|zelda|mario|pokemon|sonic|kirby|fifa)/i',
         $t
@@ -89,7 +104,6 @@ function bepaalGeforceerdeFunctieKeuze(string $berichtTekst)
         ];
     }
 
-    // Alleen een genrewoord + vraagteken (bijv. "danspellen?") zonder apart woord "spellen".
     if ($heeftGenreWoord && $isVraag) {
         return [
             'type' => 'function',
@@ -99,6 +113,5 @@ function bepaalGeforceerdeFunctieKeuze(string $berichtTekst)
         ];
     }
 
-    // Geen duidelijke product/order-vraag → OpenAI mag zelf kiezen.
     return 'auto';
 }

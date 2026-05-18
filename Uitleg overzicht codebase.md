@@ -32,26 +32,56 @@ Code-links in dit document zijn relatief (werken in GitHub én als je de repo lo
     3) definitief antwoord maken
   - Kan ook interne functies gebruiken (live data uit de database):
     - `zoek_productvoorraad` (één product: op voorraad ja/nee)
-    - `zoek_productaanraders` (genre/aanraders: alleen titels die echt op voorraad zijn)
+    - `zoek_productaanraders` (meerdere producten: alleen wat echt op voorraad is)
     - `zoek_bestelling` (order-status)
-  - Order lookup helpers (gedeeld met EmailDashboard):
-    - [bestelling_lookup.php](include/bestelling_lookup.php)
-    - Worker gebruikt hiervoor de functie `zoekBestellingRuw(...)` uit dat bestand.
-  - Functie-keuze (zodat de bot niet gokt bij spellen/voorraad):
-    - [chat_functie_keuze.php](include/chat_functie_keuze.php)
-    - Functie: `bepaalGeforceerdeFunctieKeuze(...)` — kijkt naar de klanttekst en beslist welke functie verplicht is.
-    - Voorbeelden:
-      - “spellen die lijken op Xenoblade” → `zoek_productaanraders`
-      - “danspellen?” (één woord: dans+pellen) → `zoek_productaanraders`
-      - “hebben jullie geen Just Dance?” → `zoek_productvoorraad`
-    - Bij vragen over “op voorraad/prijs/beschikbaar” dwingt de worker ook functie-gebruik af ([worker.php](api/chat/worker.php)).
   - Belangrijkste functies in de worker (handig om snel te vinden):
     - Berichten/prompt opbouw: [maakBerichtenVoorOpenAi](api/chat/worker.php)
     - system0 label ophalen: [haalAssistant0VoorBericht](api/chat/worker.php)
     - system1 bouwen via includes: [bouwSystem1MetIncludes](api/chat/worker.php)
-    - OpenAI call (met tools): [roepOpenAiAan](api/chat/worker.php#L188)
-    - OpenAI call (system0, zonder tone): [roepOpenAiAanZonderTone](api/chat/worker.php#L263)
-    - Model mode mapping: [CHAT_MODEL_MODE handling](api/chat/worker.php#L211)
+    - OpenAI call (met tools): [roepOpenAiAan](api/chat/worker.php)
+    - OpenAI call (system0): [roepOpenAiAanZonderTone](api/chat/worker.php)
+
+### Bestelling opzoeken (gedeeld met e-mail)
+- Bestand: [bestelling_lookup.php](include/bestelling_lookup.php)
+- Doet:
+  - Zoekt een bestelling in de database (bestelnummer + e-mail).
+  - Wordt gebruikt door chat (`zoek_bestelling`) en door het e-maildashboard (US23).
+
+### Welke functie moet de bot gebruiken?
+- Bestand: [chat_functie_keuze.php](include/chat_functie_keuze.php)
+- Doet:
+  - Kijkt naar het bericht van de klant (+ label uit system0).
+  - Beslist of de bot verplicht moet zoeken in de database, of dat de AI zelf mag kiezen (`auto`).
+- Belangrijk:
+  - Bij **ProductFinder** (klant zoekt nog een game): eerst **geen** database forceren → eerst Mr M + 5 vragen.
+  - Na de zin **“Ik heb antwoord op al mijn vragen”**: wél database zoeken (`zoek_productaanraders`).
+- Functie: [bepaalGeforceerdeFunctieKeuze](include/chat_functie_keuze.php)
+
+### Producten zoeken in Winkel (aanraders)
+- Bestand: [chat_product_zoek.php](include/chat_product_zoek.php)
+- Doet:
+  - Zoekt in tabel `Winkel` met 1 of meer zoekwoorden.
+  - Alleen producten met `aantal > 0` (echt op voorraad).
+- Hoe het werkt (simpel):
+  - De AI stuurt meerdere zoekwoorden mee (bijv. dans, dance, danser).
+  - PHP zoekt elk woord in titel, link en omschrijving.
+  - Dubbele producten gaan eruit.
+  - In het antwoord mag de bot **alleen** die producten noemen (geen verzonnen titels).
+
+### ProductFinder (5 vragen, zoals de oude chat)
+- Doel:
+  - Klant weet nog niet welke game hij wil → eerst een paar korte vragen (cadeau? kind? genre?).
+- Waar in de code:
+  - system0 geeft label **ProductFinder** terug ([system0.php](include/ChatGPT/system0.php)).
+  - Worker laadt dan [VerkoopAdvies3.php](include/ChatGPT/VerkoopAdvies3.php) (sectie B in de prompt).
+  - Mr M-stijl komt uit [mrM.php](include/ChatGPT/mrM.php) (sectie A).
+- Hoe het werkt (simpel):
+  1. Klant stelt een brede vraag (bijv. “hebben jullie dans spellen?”).
+  2. Mr M stelt **1 korte vraag** per antwoord (max. 5), zoals in de oude chat.
+  3. Klant zegt: **“Ik heb antwoord op al mijn vragen.”**
+  4. Dan laadt de worker [ProductList.php](include/ChatGPT/ProductList.php) en/of `zoek_productaanraders` met zoekwoorden uit het gesprek.
+- Let op:
+  - system0 kiest het **onderwerp** (ProductFinder, Zending, …). Dat is **geen** productlijst uit de shop.
 
 ### Kennis / content (FAQ & tone of voice)
 - Tone-of-voice:
@@ -173,9 +203,13 @@ Code-links in dit document zijn relatief (werken in GitHub én als je de repo lo
 - Bot zegt verkeerde bedrijfsinfo (retour/verzenden/openingstijden):
   - check de inhoud in [include/ChatGPT/](include/ChatGPT/) + [contact.inc](include/contact.inc#L27) + [time4.inc](include/time4.inc#L25)
   - check of system0 goed labelt in [system0.php](include/ChatGPT/system0.php#L4)
-- Bot gokt over voorraad/prijs of zegt ten onrechte “nee” bij genre-vragen:
-  - check worker log of `zoek_productvoorraad` of `zoek_productaanraders` wordt aangeroepen
-  - check [chat_functie_keuze.php](include/chat_functie_keuze.php) (herkent o.a. “lijken op”, “danspellen”, “Just Dance”)
+- Bot gokt over voorraad/prijs of zegt ten onrechte “nee”:
+  - check worker log: staat er “Functie aangeroepen: zoek_productvoorraad” of “zoek_productaanraders”?
+  - check [chat_functie_keuze.php](include/chat_functie_keuze.php)
+  - check [chat_product_zoek.php](include/chat_product_zoek.php)
+- Bot mist Mr M-stijl of de 5 verkoopvragen:
+  - check of system0 **ProductFinder** teruggeeft ([system0.php](include/ChatGPT/system0.php))
+  - check of [VerkoopAdvies3.php](include/ChatGPT/VerkoopAdvies3.php) geladen wordt in [bouwSystem1MetIncludes](api/chat/worker.php)
 - Model/kwaliteit aanpassen:
   - zet `CHAT_MODEL_MODE=1` in `.env` (5.2) of `2` (5-mini) of `3` (4.1-mini)
 
@@ -205,4 +239,4 @@ Code-links in dit document zijn relatief (werken in GitHub én als je de repo lo
   - Coverage laat zien welke regels code door de tests worden uitgevoerd.
   - Alleen de bestanden die in `phpunit.xml` staan tellen mee.
   - Laag % = meestal te weinig tests of te weinig verschillende gevallen getest.
-  - Op dit moment: `include/bestelling_lookup.php` + `include/email_dashboard_helpers.php`
+  - Op dit moment: `include/bestelling_lookup.php`, `include/email_dashboard_helpers.php`, `include/chat_functie_keuze.php`, `include/chat_product_zoek.php`

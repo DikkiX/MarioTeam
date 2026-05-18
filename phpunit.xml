@@ -16,6 +16,7 @@
       <file>include/bestelling_lookup.php</file>
       <file>include/email_dashboard_helpers.php</file>
       <file>include/chat_functie_keuze.php</file>
+      <file>include/chat_product_zoek.php</file>
     </include>
   </source>
 </phpunit>
