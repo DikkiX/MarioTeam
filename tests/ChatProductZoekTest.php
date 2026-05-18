@@ -44,4 +44,12 @@ final class ChatProductZoekTest extends TestCase
         $this->assertContains('Minecraft: Story Mode', $varianten);
         $this->assertContains('Minecraft Story Mode', $varianten);
     }
+
+    public function testLinkSlugWordtKorterVoorDatabaseMatch(): void
+    {
+        $varianten = maakLinkSlugVarianten('Minecraft_Story_Mode_-_The_Complete_Adventure');
+
+        $this->assertContains('Minecraft_Story_Mode_-_The_Complete_Adventure', $varianten);
+        $this->assertContains('Minecraft_Story_Mode', $varianten);
+    }
 }

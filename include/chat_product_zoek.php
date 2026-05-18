@@ -285,15 +285,45 @@ function zoekProductOpZoekterm(PDO $conn, string $zoekterm): ?array
     return null;
 }
 
-// Zoekt 1 product op de slug uit de shop-link (betrouwbaarst na een aanbeveling).
-function zoekProductOpLinkSlug(PDO $conn, string $slug): ?array
+// Maakt kortere slug-varianten (shop-URL is soms langer dan w.link in de database).
+function maakLinkSlugVarianten(string $slug): array
 {
     $slug = trim($slug);
     if ($slug === '') {
-        return null;
+        return [];
     }
 
-    $like = '%' . $slug . '%';
+    $varianten = [$slug];
+
+    // Bijv. Minecraft_Story_Mode_-_The_Complete_Adventure → ook Minecraft_Story_Mode proberen.
+    if (preg_match('/^(.+?)_-_.+$/u', $slug, $match) === 1) {
+        $korter = trim((string) $match[1]);
+        if ($korter !== '') {
+            $varianten[] = $korter;
+        }
+    }
+
+    $delen = explode('_', $slug);
+    while (count($delen) > 3) {
+        array_pop($delen);
+        $varianten[] = implode('_', $delen);
+    }
+
+    $uniek = [];
+    foreach ($varianten as $v) {
+        $v = trim($v);
+        if ($v === '') {
+            continue;
+        }
+        $uniek[$v] = $v;
+    }
+
+    return array_values($uniek);
+}
+
+// Zoekt 1 product op de slug uit de shop-link (betrouwbaarst na een aanbeveling).
+function zoekProductOpLinkSlug(PDO $conn, string $slug): ?array
+{
     $stmt = $conn->prepare("
         SELECT
             w.nr,
@@ -307,10 +337,16 @@ function zoekProductOpLinkSlug(PDO $conn, string $slug): ?array
         ORDER BY w.aantal DESC, w.prijs ASC
         LIMIT 1
     ");
-    $stmt->execute([':zoekterm_link' => $like]);
-    $rij = $stmt->fetch();
 
-    return is_array($rij) && !empty($rij['titel']) ? $rij : null;
+    foreach (maakLinkSlugVarianten($slug) as $variant) {
+        $stmt->execute([':zoekterm_link' => '%' . $variant . '%']);
+        $rij = $stmt->fetch();
+        if (is_array($rij) && !empty($rij['titel'])) {
+            return $rij;
+        }
+    }
+
+    return null;
 }
 
 // Leest de laatste bot-antwoorden en controleert voorraad per genoemde shop-link.
