@@ -895,27 +895,44 @@ try {
         }
     }
 
-    $eersteAntwoord = roepOpenAiAan($messages, $tools, $toolChoice);
+    // We ondersteunen meerdere tool-rondes:
+    // soms vraagt OpenAI na de eerste tool-call nog een extra lookup.
+    // Als we dat niet afhandelen, kan het antwoord leeg blijven en krijgt de chat "Er ging iets mis...".
+    $maxToolRondes = 3;
+    $toolRonde = 0;
+    $huidigeToolChoice = $toolChoice;
+    $aiResponse = roepOpenAiAan($messages, $tools, $huidigeToolChoice);
 
-    if (!isset($eersteAntwoord['choices'][0]['message'])) {
-        updateChatQueueBericht($conn, $actiefBerichtId, 'error');
-        schrijfWorkerLog('OpenAI gaf geen bruikbaar eerste antwoord terug.');
-        exit('Worker kon geen eerste AI-antwoord maken.');
-    }
+    while (true) {
+        if (!is_array($aiResponse) || !isset($aiResponse['choices'][0]['message'])) {
+            updateChatQueueBericht($conn, $actiefBerichtId, 'error');
+            schrijfWorkerLog('OpenAI gaf geen bruikbaar antwoord terug (ronde ' . (string) $toolRonde . ').');
+            exit('Worker kon geen AI-antwoord maken.');
+        }
 
-    $assistantMessage = $eersteAntwoord['choices'][0]['message'];
+        $assistantMessage = $aiResponse['choices'][0]['message'];
 
-    // Als OpenAI iets wil opzoeken, voeren we die functie hier uit.
-    if (!empty($assistantMessage['tool_calls'])) {
-        schrijfWorkerLog('OpenAI vroeg om een interne functie voor bericht ' . $bericht['id'] . '.');
+        if (empty($assistantMessage['tool_calls'])) {
+            // Klaar: we hebben normale tekst.
+            $directAntwoord = $assistantMessage['content'] ?? '';
+            if (is_string($directAntwoord) && trim((string) $directAntwoord) !== '') {
+                updateChatQueueBericht($conn, $actiefBerichtId, 'completed', $directAntwoord);
+                schrijfWorkerLog('AI antwoord gemaakt (lengte ' . strlen((string) $directAntwoord) . ').');
+                break;
+            }
 
-        // We bewaren eerst het bericht van OpenAI, zodat het gesprek klopt.
+            updateChatQueueBericht($conn, $actiefBerichtId, 'error');
+            schrijfWorkerLog('OpenAI gaf geen tekst en ook geen functie terug.');
+            exit('Worker kreeg geen bruikbaar AI-antwoord terug.');
+        }
+
+        // Tool-call(s) uitvoeren.
+        schrijfWorkerLog('OpenAI vroeg om interne functie(s) voor bericht ' . $bericht['id'] . ' (ronde ' . (string) $toolRonde . ').');
         $messages[] = $assistantMessage;
 
         foreach ($assistantMessage['tool_calls'] as $toolCall) {
             $functieNaam = $toolCall['function']['name'] ?? '';
             $arguments = json_decode($toolCall['function']['arguments'] ?? '{}', true);
-
             if (!is_array($arguments)) {
                 $arguments = [];
             }
@@ -926,7 +943,6 @@ try {
             $len = is_string($resultJson) ? strlen($resultJson) : 0;
             schrijfWorkerLog('Functie-resultaat ontvangen (' . $len . ' bytes).');
 
-            // Hier geven we de gevonden data terug aan OpenAI.
             $messages[] = [
                 'role' => 'tool',
                 'tool_call_id' => $toolCall['id'],
@@ -934,30 +950,17 @@ try {
             ];
         }
 
-        // Nu maakt OpenAI met die data het echte antwoord.
-        $tweedeAntwoord = roepOpenAiAan($messages);
-        $definitiefAntwoord = $tweedeAntwoord['choices'][0]['message']['content'] ?? '';
-
-        if ($definitiefAntwoord !== '') {
-            updateChatQueueBericht($conn, $actiefBerichtId, 'completed', $definitiefAntwoord);
-            schrijfWorkerLog('Definitief AI-antwoord gemaakt voor bericht ' . $bericht['id'] . ' (lengte ' . strlen((string) $definitiefAntwoord) . ').');
-        } else {
+        $toolRonde += 1;
+        if ($toolRonde >= $maxToolRondes) {
             updateChatQueueBericht($conn, $actiefBerichtId, 'error');
-            schrijfWorkerLog('Na het opzoeken kwam er geen definitief antwoord terug.');
-            exit('Worker kon geen definitief AI-antwoord maken.');
+            schrijfWorkerLog('Te veel tool-rondes, breekt af.');
+            exit('Worker kreeg te veel tool-rondes.');
         }
-    } else {
-        // Soms geeft OpenAI meteen al een normaal antwoord terug.
-        $directAntwoord = $assistantMessage['content'] ?? '';
 
-        if ($directAntwoord !== '') {
-            updateChatQueueBericht($conn, $actiefBerichtId, 'completed', $directAntwoord);
-            schrijfWorkerLog('OpenAI gaf direct antwoord zonder functie (lengte ' . strlen((string) $directAntwoord) . ').');
-        } else {
-            updateChatQueueBericht($conn, $actiefBerichtId, 'error');
-            schrijfWorkerLog('OpenAI gaf geen tekst en ook geen functie terug.');
-            exit('Worker kreeg geen bruikbaar AI-antwoord terug.');
-        }
+        // Volgende ronde: laat OpenAI het echte antwoord maken (of nog een extra tool-call doen).
+        // Tools sturen we mee, anders kan OpenAI in sommige gevallen tool-messages afwijzen.
+        $huidigeToolChoice = 'auto';
+        $aiResponse = roepOpenAiAan($messages, $tools, $huidigeToolChoice);
     }
 
     echo 'Bericht ' . $bericht['id'] . ' is verwerkt.';
