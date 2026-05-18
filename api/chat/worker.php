@@ -501,10 +501,9 @@ function voerInterneFunctieUit($conn, $functieNaam, $arguments)
                 WHERE w.aantal > 0
                   AND (w.titel LIKE :t OR w.link LIKE :t OR w.sentence LIKE :t)
                 ORDER BY w.aantal DESC, w.prijs ASC
-                LIMIT :limiet
+                LIMIT " . (int) $max . "
             ");
             $stmt->bindValue(':t', $like, PDO::PARAM_STR);
-            $stmt->bindValue(':limiet', $max, PDO::PARAM_INT);
             $stmt->execute();
             $rows = $stmt->fetchAll();
         } else {
@@ -514,9 +513,8 @@ function voerInterneFunctieUit($conn, $functieNaam, $arguments)
                 FROM Winkel w
                 WHERE w.aantal > 0
                 ORDER BY w.aantal DESC, w.prijs ASC
-                LIMIT :limiet
+                LIMIT " . (int) $max . "
             ");
-            $stmt->bindValue(':limiet', $max, PDO::PARAM_INT);
             $stmt->execute();
             $rows = $stmt->fetchAll();
         }
