@@ -390,33 +390,44 @@ function voerInterneFunctieUit($conn, $functieNaam, $arguments)
             ];
         }
 
-        // We zoeken op titel of link en geven de beste matches terug.
-        $zoektermLike = '%' . $zoekterm . '%';
-        $stmt = $conn->prepare("
-            SELECT 
-                w.nr,
-                w.titel,
-                w.link,
-                w.prijs,
-                w.sentence,
-                CASE WHEN w.aantal > 0 THEN 'ja' ELSE 'nee' END AS op_voorraad,
-                i.leeftijd,
-                i.spelers,
-                i.GemCijfer,
-                i.TotBeoord
-            FROM Winkel w
-            LEFT JOIN info i ON i.link = w.link
-            WHERE w.titel LIKE :zoekterm_titel OR w.link LIKE :zoekterm_link
-            ORDER BY w.aantal DESC, w.prijs ASC
-            LIMIT 5
-        ");
-        $stmt->execute([
-            ':zoekterm_titel' => $zoektermLike,
-            ':zoekterm_link' => $zoektermLike,
-        ]);
-
-        $resultaat = $stmt->fetchAll();
-        $resultaat = is_array($resultaat) ? $resultaat : [];
+        $resultaat = [];
+        try {
+            // We zoeken op titel of link en geven de beste matches terug.
+            $zoektermLike = '%' . $zoekterm . '%';
+            $stmt = $conn->prepare("
+                SELECT 
+                    w.nr,
+                    w.titel,
+                    w.link,
+                    w.prijs,
+                    w.sentence,
+                    CASE WHEN w.aantal > 0 THEN 'ja' ELSE 'nee' END AS op_voorraad,
+                    i.leeftijd,
+                    i.spelers,
+                    i.GemCijfer,
+                    i.TotBeoord
+                FROM Winkel w
+                LEFT JOIN info i ON i.link = w.link
+                WHERE w.titel LIKE :zoekterm_titel OR w.link LIKE :zoekterm_link
+                ORDER BY w.aantal DESC, w.prijs ASC
+                LIMIT 5
+            ");
+            $stmt->execute([
+                ':zoekterm_titel' => $zoektermLike,
+                ':zoekterm_link' => $zoektermLike,
+            ]);
+            $resultaat = $stmt->fetchAll();
+            $resultaat = is_array($resultaat) ? $resultaat : [];
+        } catch (Throwable $e) {
+            schrijfWorkerLog('zoek_productvoorraad fout: ' . $e->getMessage());
+            return [
+                'functie' => 'zoek_productvoorraad',
+                'gevonden' => false,
+                'status' => 'fout',
+                'message' => 'Voorraad opzoeken is nu niet beschikbaar.',
+                'resultaat' => [],
+            ];
+        }
 
         $basisUrl = '';
         if (isset($univ_web) && is_string($univ_web) && $univ_web !== '') {
@@ -492,34 +503,46 @@ function voerInterneFunctieUit($conn, $functieNaam, $arguments)
         }
 
         $rows = [];
-        if ($zoekterm !== '') {
-            // Met zoekterm zoeken we ook in sentence, zodat "RPG" of "Zelda" vaker matcht.
-            $like = '%' . $zoekterm . '%';
-            $stmt = $conn->prepare("
-                SELECT w.nr, w.titel, w.link, w.prijs, w.sentence
-                FROM Winkel w
-                WHERE w.aantal > 0
-                  AND (w.titel LIKE :t OR w.link LIKE :t OR w.sentence LIKE :t)
-                ORDER BY w.aantal DESC, w.prijs ASC
-                LIMIT " . (int) $max . "
-            ");
-            $stmt->bindValue(':t', $like, PDO::PARAM_STR);
-            $stmt->execute();
-            $rows = $stmt->fetchAll();
-        } else {
-            // Zonder zoekterm: geef algemene aanraders op basis van voorraad/prijs.
-            $stmt = $conn->prepare("
-                SELECT w.nr, w.titel, w.link, w.prijs, w.sentence
-                FROM Winkel w
-                WHERE w.aantal > 0
-                ORDER BY w.aantal DESC, w.prijs ASC
-                LIMIT " . (int) $max . "
-            ");
-            $stmt->execute();
-            $rows = $stmt->fetchAll();
+        try {
+            if ($zoekterm !== '') {
+                // Met zoekterm zoeken we ook in sentence, zodat "RPG" of "Zelda" vaker matcht.
+                $like = '%' . $zoekterm . '%';
+                $stmt = $conn->prepare("
+                    SELECT w.nr, w.titel, w.link, w.prijs, w.sentence
+                    FROM Winkel w
+                    WHERE w.aantal > 0
+                      AND (w.titel LIKE :t_titel OR w.link LIKE :t_link OR w.sentence LIKE :t_sentence)
+                    ORDER BY w.aantal DESC, w.prijs ASC
+                    LIMIT " . (int) $max . "
+                ");
+                $stmt->bindValue(':t_titel', $like, PDO::PARAM_STR);
+                $stmt->bindValue(':t_link', $like, PDO::PARAM_STR);
+                $stmt->bindValue(':t_sentence', $like, PDO::PARAM_STR);
+                $stmt->execute();
+                $rows = $stmt->fetchAll();
+            } else {
+                // Zonder zoekterm: geef algemene aanraders op basis van voorraad/prijs.
+                $stmt = $conn->prepare("
+                    SELECT w.nr, w.titel, w.link, w.prijs, w.sentence
+                    FROM Winkel w
+                    WHERE w.aantal > 0
+                    ORDER BY w.aantal DESC, w.prijs ASC
+                    LIMIT " . (int) $max . "
+                ");
+                $stmt->execute();
+                $rows = $stmt->fetchAll();
+            }
+            $rows = is_array($rows) ? $rows : [];
+        } catch (Throwable $e) {
+            schrijfWorkerLog('zoek_productaanraders fout: ' . $e->getMessage());
+            return [
+                'functie' => 'zoek_productaanraders',
+                'gevonden' => false,
+                'status' => 'fout',
+                'message' => 'Aanraders opzoeken is nu niet beschikbaar.',
+                'resultaat' => [],
+            ];
         }
-
-        $rows = is_array($rows) ? $rows : [];
         if ($basisUrl !== '' && !empty($rows)) {
             // Maak van relative links een volledige product_url.
             foreach ($rows as $idx => $row) {
