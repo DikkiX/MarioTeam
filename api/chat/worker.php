@@ -159,6 +159,31 @@ function bouwToolsVoorOpenAi()
                 ],
             ],
         ],
+        [
+            'type' => 'function',
+            'function' => [
+                // Nieuwe tool om de "random suggesties" bug te voorkomen:
+                // aanraders/alternatieven moeten altijd uit de echte database komen (en op voorraad zijn),
+                // anders lijkt het alsof de voorraadchecker niet werkt.
+                'name' => 'zoek_productaanraders',
+                'description' => 'Zoek live producten die op voorraad zijn (aanraders/alternatieven). Gebruik dit om alleen producten te noemen die echt in de database staan en op voorraad zijn.',
+                'parameters' => [
+                    'type' => 'object',
+                    'properties' => [
+                        'zoekterm' => [
+                            'type' => 'string',
+                            'description' => 'Zoekwoord voor titel/omschrijving (bijv. RPG, Mario, Zelda). Leeg = algemene aanraders.',
+                        ],
+                        'max_results' => [
+                            'type' => 'integer',
+                            'description' => 'Aantal resultaten (1 t/m 10).',
+                        ],
+                    ],
+                    'required' => [],
+                    'additionalProperties' => false,
+                ],
+            ],
+        ],
     ];
 }
 
@@ -176,6 +201,17 @@ function bepaalGeforceerdeToolChoice($berichtTekst)
             'type' => 'function',
             'function' => [
                 'name' => 'zoek_bestelling',
+            ],
+        ];
+    }
+
+    // Als iemand om vergelijkbare games / suggesties / aanraders vraagt, willen we alleen echte producten noemen.
+    // Daarom forceren we een lookup op in-stock producten (zoek_productaanraders).
+    if (preg_match('/\b(aanraden|aanrader|suggest|suggestie|alternatief|soortgelijk|gelijke|vergelijkbaar|vergelijkbare|andere\s+games|andere\s+spellen)\b/i', (string) $berichtTekst) === 1) {
+        return [
+            'type' => 'function',
+            'function' => [
+                'name' => 'zoek_productaanraders',
             ],
         ];
     }
@@ -435,6 +471,98 @@ function voerInterneFunctieUit($conn, $functieNaam, $arguments)
         ];
     }
 
+    if ($functieNaam === 'zoek_productaanraders') {
+        global $univ_web;
+        // Dit is de "aanrader/alternatief" lookup:
+        // - geeft alleen producten terug die echt bestaan in Winkel
+        // - en waar aantal > 0 (dus op voorraad)
+        // Zo voorkomen we dat de bot titels verzint of links geeft naar niet-bestaande producten.
+        $zoekterm = isset($arguments['zoekterm']) ? trim((string) $arguments['zoekterm']) : '';
+        $max = isset($arguments['max_results']) ? (int) $arguments['max_results'] : 5;
+        if ($max < 1) {
+            $max = 1;
+        }
+        if ($max > 10) {
+            $max = 10;
+        }
+
+        $basisUrl = '';
+        if (isset($univ_web) && is_string($univ_web) && $univ_web !== '') {
+            $basisUrl = 'https://www.' . $univ_web;
+        }
+
+        $rows = [];
+        if ($zoekterm !== '') {
+            // Met zoekterm zoeken we ook in sentence, zodat "RPG" of "Zelda" vaker matcht.
+            $like = '%' . $zoekterm . '%';
+            $stmt = $conn->prepare("
+                SELECT w.nr, w.titel, w.link, w.prijs, w.sentence
+                FROM Winkel w
+                WHERE w.aantal > 0
+                  AND (w.titel LIKE :t OR w.link LIKE :t OR w.sentence LIKE :t)
+                ORDER BY w.aantal DESC, w.prijs ASC
+                LIMIT :limiet
+            ");
+            $stmt->bindValue(':t', $like, PDO::PARAM_STR);
+            $stmt->bindValue(':limiet', $max, PDO::PARAM_INT);
+            $stmt->execute();
+            $rows = $stmt->fetchAll();
+        } else {
+            // Zonder zoekterm: geef algemene aanraders op basis van voorraad/prijs.
+            $stmt = $conn->prepare("
+                SELECT w.nr, w.titel, w.link, w.prijs, w.sentence
+                FROM Winkel w
+                WHERE w.aantal > 0
+                ORDER BY w.aantal DESC, w.prijs ASC
+                LIMIT :limiet
+            ");
+            $stmt->bindValue(':limiet', $max, PDO::PARAM_INT);
+            $stmt->execute();
+            $rows = $stmt->fetchAll();
+        }
+
+        $rows = is_array($rows) ? $rows : [];
+        if ($basisUrl !== '' && !empty($rows)) {
+            // Maak van relative links een volledige product_url.
+            foreach ($rows as $idx => $row) {
+                $link = isset($row['link']) ? trim((string) $row['link']) : '';
+                if ($link === '') {
+                    continue;
+                }
+
+                if (preg_match('/^https?:\/\//i', $link) === 1) {
+                    $rows[$idx]['product_url'] = $link;
+                    continue;
+                }
+
+                if (preg_match('/^www\./i', $link) === 1) {
+                    $rows[$idx]['product_url'] = 'https://' . $link;
+                    continue;
+                }
+
+                $rows[$idx]['product_url'] = $basisUrl . '/' . ltrim($link, '/');
+            }
+        }
+
+        if (empty($rows)) {
+            // Geen resultaten = bot moet geen games gaan verzinnen, maar dit netjes terugkoppelen.
+            return [
+                'functie' => 'zoek_productaanraders',
+                'gevonden' => false,
+                'status' => 'geen_resultaten',
+                'message' => 'Geen aanraders gevonden die nu op voorraad zijn.',
+                'resultaat' => [],
+            ];
+        }
+
+        return [
+            'functie' => 'zoek_productaanraders',
+            'gevonden' => true,
+            'status' => 'gevonden',
+            'resultaat' => $rows,
+        ];
+    }
+
     return [
         'functie' => $functieNaam,
         'gevonden' => false,
@@ -630,7 +758,7 @@ function maakBerichtenVoorOpenAi($conn, $bericht)
 {
     global $univ_one, $univ_web, $univ_nin, $univ_web_text, $univ_mar, $univ_zoeken;
 
-    $basisPrompt = 'Je bent een klantenservice assistent voor MarioSwitch.nl. Als je live data nodig hebt, gebruik je een functie. Geef geen data op basis van aannames als een functie nodig is. Noem nooit exacte voorraadaantallen aan klanten. Zeg alleen of iets op voorraad is of niet. Voor orderdata moet de klant eerst zowel een bestelnummer als het juiste e-mailadres geven. Als je via zoek_bestelling artikelen terugkrijgt en artikelen_gevonden true is, presenteer die als een nette lijst met per regel: "{aantal}x {productnaam} — {prijs} euro" (als prijs bekend is). Toon daarna altijd: "Verzendkosten: X euro" en "Totaal: Y euro" op basis van resultaat.verzendkosten en resultaat.totaal. Als artikelen_gevonden false is, zeg dan dat je de artikelregels nu niet kunt ophalen (en claim niet dat er geen artikelen zijn). Voor verzenden: gebruik resultaat.verzend_status (verzonden/niet_verzonden). Als resultaat.track_code gevuld is, toon die. Als track_code leeg is, zeg dat er (nog) geen track&trace code beschikbaar is. Bij bezorgtijden/verzenden/verzendkosten: gebruik alleen de info uit de FAQ die je hebt gekregen. Noem geen zelfbedachte levertijden zoals "1 tot 3 werkdagen". Als er geen exacte belofte staat, zeg dat het meestal de volgende werkdag is (bij bestelling voor 18:00), maar dat er geen 100% garantie is. Als de gebruiker vraagt of een game op voorraad is (of vraagt naar prijs/voorraad), roep altijd de functie zoek_productvoorraad aan en baseer je antwoord alleen op die uitkomst. Bij de uitkomst van zoek_productvoorraad geldt: als gevonden=false of status="niet_in_database", zeg dan dat het product op dit moment niet in het assortiment staat (dus nu niet verkocht wordt) en vraag eventueel om een link/andere zoekterm. Als status="niet_op_voorraad", zeg dat het product nu niet op voorraad is en dat het later weer kan terugkomen. Als status="op_voorraad", zeg dat het op voorraad is. Gebruik product_url als je een link wilt geven. Zeg nooit: "als er een prijs op de website staat is het op voorraad" en leid voorraad ook niet af van prijs; vertrouw alleen op zoek_productvoorraad. Zeg ook niet dat je het "voorraad aantal" niet kunt ophalen; zeg dat je alleen op voorraad ja/nee kunt geven.';
+    $basisPrompt = 'Je bent een klantenservice assistent voor MarioSwitch.nl. Als je live data nodig hebt, gebruik je een functie. Geef geen data op basis van aannames als een functie nodig is. Noem nooit exacte voorraadaantallen aan klanten. Zeg alleen of iets op voorraad is of niet. Voor orderdata moet de klant eerst zowel een bestelnummer als het juiste e-mailadres geven. Als je via zoek_bestelling artikelen terugkrijgt en artikelen_gevonden true is, presenteer die als een nette lijst met per regel: "{aantal}x {productnaam} — {prijs} euro" (als prijs bekend is). Toon daarna altijd: "Verzendkosten: X euro" en "Totaal: Y euro" op basis van resultaat.verzendkosten en resultaat.totaal. Als artikelen_gevonden false is, zeg dan dat je de artikelregels nu niet kunt ophalen (en claim niet dat er geen artikelen zijn). Voor verzenden: gebruik resultaat.verzend_status (verzonden/niet_verzonden). Als resultaat.track_code gevuld is, toon die. Als track_code leeg is, zeg dat er (nog) geen track&trace code beschikbaar is. Bij bezorgtijden/verzenden/verzendkosten: gebruik alleen de info uit de FAQ die je hebt gekregen. Noem geen zelfbedachte levertijden zoals "1 tot 3 werkdagen". Als er geen exacte belofte staat, zeg dat het meestal de volgende werkdag is (bij bestelling voor 18:00), maar dat er geen 100% garantie is. Als de gebruiker vraagt of een game op voorraad is (of vraagt naar prijs/voorraad), roep altijd de functie zoek_productvoorraad aan en baseer je antwoord alleen op die uitkomst. Bij de uitkomst van zoek_productvoorraad geldt: als gevonden=false of status="niet_in_database", zeg dan dat het product op dit moment niet in het assortiment staat (dus nu niet verkocht wordt) en vraag eventueel om een link/andere zoekterm. Als status="niet_op_voorraad", zeg dat het product nu niet op voorraad is en dat het later weer kan terugkomen. Als status="op_voorraad", zeg dat het op voorraad is. Gebruik product_url als je een link wilt geven. Zeg nooit: "als er een prijs op de website staat is het op voorraad" en leid voorraad ook niet af van prijs; vertrouw alleen op zoek_productvoorraad. Zeg ook niet dat je het "voorraad aantal" niet kunt ophalen; zeg dat je alleen op voorraad ja/nee kunt geven. Als de gebruiker om aanraders/vergelijkbare games vraagt, noem dan alleen titels die je live hebt opgehaald via zoek_productaanraders. Noem nooit zelf verzonnen titels of links.';
 
     // Stap 1: haal context (laatste afgeronde berichten) op uit de queue.
     $contextMessages = haalGespreksContextOp(
