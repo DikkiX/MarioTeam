@@ -49,17 +49,30 @@ Test bestand: [tests/BestellingLookupTest.php](tests/BestellingLookupTest.php)
 
 2) Chat functie-keuze (`include/chat_functie_keuze.php`)
 - [bepaalGeforceerdeFunctieKeuze](include/chat_functie_keuze.php): kiest of de bot verplicht in de database moet zoeken.
+- [isVoorraadFollowUpVraag](include/chat_functie_keuze.php): herkent “zijn ze op voorraad?” na een eerdere aanbeveling.
 - Bij ProductFinder: geeft `auto` terug (eerst 5 vragen, geen database forceren).
 - Na “Ik heb antwoord op al mijn vragen”: geeft `zoek_productaanraders` terug.
 - Tests: [ChatFunctieKeuzeTest.php](tests/ChatFunctieKeuzeTest.php)
+  - Xenoblade / danspellen / Just Dance → juiste functie
+  - voorraad-follow-up (“zijn ze op voorraad”, “hebben jullie ze nog…”)
+  - ProductFinder + “lijken op Xenoblade” → nog `auto` (bewust gedrag)
 
 3) Chat product-zoeken (`include/chat_product_zoek.php`)
 - [haalZoektermenUitToolArgs](include/chat_product_zoek.php): leest zoekwoorden uit de tool-call.
 - [breidZoektermenUitVoorDatabase](include/chat_product_zoek.php): maakt zoekwoorden iets breder (bijv. dans → dance).
-- [zoekAanradersInDatabase](include/chat_product_zoek.php): zoekt in Winkel (alleen op voorraad).
+- [haalProductLinksUitTekst](include/chat_product_zoek.php): shop-slugs uit bot-tekst (dedupe).
+- [maakProductZoektermVarianten](include/chat_product_zoek.php) / [maakLinkSlugVarianten](include/chat_product_zoek.php): betere LIKE-match (Minecraft-fix).
+- [controleerVoorraadUitGesprek](include/chat_product_zoek.php): voorraadcheck zonder links in gesprek → `geen_producten_in_gesprek`.
 - Tests: [ChatProductZoekTest.php](tests/ChatProductZoekTest.php)
 
-4) EmailDashboard helpers (`include/email_dashboard_helpers.php`)
+4) Chatgeschiedenis (`include/chat_geschiedenis.php`)
+- [voegToeAanConversationJsonArray](include/chat_geschiedenis.php): zelfde JSON-formaat als oude chat (`user` / `assistant`).
+- [zetUrlsOmNaarLinksInHtml](include/chat_geschiedenis.php): bot-URL’s worden `<a>`-tags (ook punt na link blijft buiten de link).
+- [maakChatBerichtHtml](include/chat_geschiedenis.php): user-tekst wordt geescaped (geen `<script>`).
+- [laadConversationJsonArray](include/chat_geschiedenis.php): kapotte JSON → lege array.
+- Tests: [ChatGeschiedenisTest.php](tests/ChatGeschiedenisTest.php)
+
+5) EmailDashboard helpers (`include/email_dashboard_helpers.php`)
 - Helpers die je kunt testen zonder Gmail of login, zoals:
   - `formatteerBestandsgrootte`: zet bytes om naar tekst zoals `500 B`, `1,0 KB`, `1,5 MB`.
   - `normaliseerContentId`: haalt `<` en `>` weg uit een Content-ID, zodat `cid:` links matchen.
@@ -97,6 +110,7 @@ Op dit moment tellen deze bestanden mee:
 - `include/email_dashboard_helpers.php`
 - `include/chat_functie_keuze.php`
 - `include/chat_product_zoek.php`
+- `include/chat_geschiedenis.php`
 
 ## Waarom we niet alles met echte DB/Gmail testen in unit tests
 

@@ -40,4 +40,26 @@ final class ChatGeschiedenisTest extends TestCase
         $this->assertStringContainsString('<a href="https://www.marioswitch.nl/Just_Dance_2018"', $html);
         $this->assertStringContainsString('Just_Dance_2018</a>', $html);
     }
+
+    public function testUrlMetPuntNaLinkHoortBuitenDeLink(): void
+    {
+        $html = zetUrlsOmNaarLinksInHtml('Bekijk https://www.marioswitch.nl/Mario_Kart. Leuk spel!');
+
+        $this->assertStringContainsString('Mario_Kart</a>.', $html);
+        $this->assertStringNotContainsString('Mario_Kart.</a>', $html);
+    }
+
+    public function testUserBerichtWordtGeescapedZonderLinks(): void
+    {
+        $html = maakChatBerichtHtml('user', '<script>alert(1)</script>');
+
+        $this->assertStringNotContainsString('<script>', $html);
+        $this->assertStringContainsString('&lt;script&gt;', $html);
+        $this->assertStringNotContainsString('<a href', $html);
+    }
+
+    public function testKapotteJsonWordtLegeArray(): void
+    {
+        $this->assertSame([], laadConversationJsonArray('{kapot'));
+    }
 }

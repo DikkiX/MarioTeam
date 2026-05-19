@@ -52,4 +52,28 @@ final class ChatProductZoekTest extends TestCase
         $this->assertContains('Minecraft_Story_Mode_-_The_Complete_Adventure', $varianten);
         $this->assertContains('Minecraft_Story_Mode', $varianten);
     }
+
+    public function testMeerdereShopLinksZonderDuplicaten(): void
+    {
+        $tekst = 'Eerst https://www.marioswitch.nl/Super_Mario_Odyssey en nog eens https://www.marioswitch.nl/Super_Mario_Odyssey';
+        $slugs = haalProductLinksUitTekst($tekst);
+
+        $this->assertSame(['Super_Mario_Odyssey'], $slugs);
+    }
+
+    public function testGeenShopLinksInTekst(): void
+    {
+        $this->assertSame([], haalProductLinksUitTekst('Hallo, geen productlink hier.'));
+    }
+
+    public function testVoorraadUitGesprekZonderLinks(): void
+    {
+        $conn = new PDO('sqlite::memory:');
+        $result = controleerVoorraadUitGesprek($conn, [
+            ['role' => 'assistant', 'content' => 'Hallo, hier zijn avonturenspellen maar zonder shop-link.'],
+        ]);
+
+        $this->assertSame('geen_producten_in_gesprek', $result['status']);
+        $this->assertSame([], $result['resultaat']);
+    }
 }

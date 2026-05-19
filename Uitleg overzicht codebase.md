@@ -62,11 +62,26 @@ Code-links in dit document zijn relatief (werken in GitHub én als je de repo lo
 - Doet:
   - Zoekt in tabel `Winkel` met 1 of meer zoekwoorden.
   - Alleen producten met `aantal > 0` (echt op voorraad).
+- Extra helpers (voorraad na aanbeveling):
+  - [haalProductLinksUitTekst](include/chat_product_zoek.php): haalt shop-slugs uit URL’s in bot-tekst.
+  - [controleerVoorraadUitGesprek](include/chat_product_zoek.php): checkt voorraad op basis van die links (bij “zijn ze op voorraad?”).
 - Hoe het werkt (simpel):
   - De AI stuurt meerdere zoekwoorden mee (bijv. dans, dance, danser).
   - PHP zoekt elk woord in titel, link en omschrijving.
   - Dubbele producten gaan eruit.
   - In het antwoord mag de bot **alleen** die producten noemen (geen verzonnen titels).
+
+### Chatgeschiedenis (HTML + JSON)
+- Bestand: [chat_geschiedenis.php](include/chat_geschiedenis.php)
+- Doet:
+  - Slaat elk chatbericht op in `chatHistory` (queue-flow: [send.php](api/chat/send.php) + [worker.php](api/chat/worker.php)).
+- Hoe het werkt (simpel):
+  1. Klant stuurt bericht → user-HTML + JSON `{"user":"..."}`.
+  2. Bot antwoord klaar → bot-HTML (met klikbare links) + JSON `{"assistant":"..."}`.
+  3. Na verversen laadt [ChatBotMrM.php](ChatBotMrM.php) de HTML uit de database.
+- Belangrijke functies:
+  - [voegBerichtToeAanChatGeschiedenis](include/chat_geschiedenis.php)
+  - [zetUrlsOmNaarLinksInHtml](include/chat_geschiedenis.php) (bot-URL’s worden `<a>`-tags)
 
 ### ProductFinder (5 vragen, zoals de oude chat)
 - Doel:
@@ -239,4 +254,4 @@ Code-links in dit document zijn relatief (werken in GitHub én als je de repo lo
   - Coverage laat zien welke regels code door de tests worden uitgevoerd.
   - Alleen de bestanden die in `phpunit.xml` staan tellen mee.
   - Laag % = meestal te weinig tests of te weinig verschillende gevallen getest.
-  - Op dit moment: `include/bestelling_lookup.php`, `include/email_dashboard_helpers.php`, `include/chat_functie_keuze.php`, `include/chat_product_zoek.php`
+  - Op dit moment: `include/bestelling_lookup.php`, `include/email_dashboard_helpers.php`, `include/chat_functie_keuze.php`, `include/chat_product_zoek.php`, `include/chat_geschiedenis.php`
