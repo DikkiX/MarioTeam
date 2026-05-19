@@ -548,6 +548,26 @@ header('X-Robots-Tag: noindex, nofollow', true);
             }
         }
 
+        // Opgeslagen bot-berichten uit de database hebben soms platte URL-tekst (geen <a>).
+        // Na verversen zetten we die alsnog om naar klikbare links.
+        function herstelLinksInOpgeslagenGeschiedenis() {
+            const botBerichten = document.querySelectorAll('.chat-message.bot');
+            botBerichten.forEach(function(wrapper) {
+                const paragraph = wrapper.querySelector('p');
+                if (!paragraph || paragraph.querySelector('a')) {
+                    return;
+                }
+
+                const ruweTekst = paragraph.textContent || '';
+                if (!/(https?:\/\/|www\.)/i.test(ruweTekst)) {
+                    return;
+                }
+
+                paragraph.textContent = '';
+                voegTekstMetLinksToe(paragraph, normaliseerBotTekst(ruweTekst));
+            });
+        }
+
         // Deze helper maakt een normaal chatbericht in het scherm.
         function createMessageElement(type, text) {
             const wrapper = document.createElement('div');
@@ -796,6 +816,7 @@ header('X-Robots-Tag: noindex, nofollow', true);
             });
 
             // Scroll naar beneden zodra de pagina is geladen
+            herstelLinksInOpgeslagenGeschiedenis();
             setTimeout(scrollToBottom, 3000); // Vertraging van 2000 ms
         });
 

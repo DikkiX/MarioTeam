@@ -54,6 +54,58 @@ function laadConversationJsonArray(?string $jsonTekst): array
     return $data;
 }
 
+// Zet URL’s in bot-tekst om naar klikbare links (zelfde idee als in ChatBotMrM.js).
+function zetUrlsOmNaarLinksInHtml(string $tekst): string
+{
+    $tekst = trim($tekst);
+    if ($tekst === '') {
+        return '';
+    }
+
+    $pattern = '#(https?://[^\s<]+|www\.[^\s<]+)#i';
+    if (preg_match_all($pattern, $tekst, $matches, PREG_OFFSET_CAPTURE) < 1 || empty($matches[0])) {
+        return htmlspecialchars($tekst, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+    }
+
+    $html = '';
+    $offset = 0;
+
+    foreach ($matches[0] as $match) {
+        $raw = (string) $match[0];
+        $start = (int) $match[1];
+        if ($start > $offset) {
+            $html .= htmlspecialchars(substr($tekst, $offset, $start - $offset), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+        }
+
+        $urlText = $raw;
+        $trailing = '';
+        while ($urlText !== '' && preg_match('/[)\].,!?;:]$/', $urlText) === 1) {
+            $trailing = substr($urlText, -1) . $trailing;
+            $urlText = substr($urlText, 0, -1);
+        }
+
+        if ($urlText !== '') {
+            $href = preg_match('/^https?:\/\//i', $urlText) === 1 ? $urlText : ('https://' . $urlText);
+            $html .= '<a href="' . htmlspecialchars($href, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') . '" target="_blank" rel="noopener noreferrer">'
+                . htmlspecialchars($urlText, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') . '</a>';
+        } else {
+            $html .= htmlspecialchars($raw, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+        }
+
+        if ($trailing !== '') {
+            $html .= htmlspecialchars($trailing, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+        }
+
+        $offset = $start + strlen($raw);
+    }
+
+    if ($offset < strlen($tekst)) {
+        $html .= htmlspecialchars(substr($tekst, $offset), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+    }
+
+    return $html;
+}
+
 // Maakt 1 chatregel als HTML (tijd staat naast de tekst, niet eroverheen).
 function maakChatBerichtHtml(string $type, string $tekst): string
 {
@@ -63,10 +115,14 @@ function maakChatBerichtHtml(string $type, string $tekst): string
         return '';
     }
 
-    $veilig = htmlspecialchars($tekst, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+    if ($type === 'bot') {
+        $inhoud = zetUrlsOmNaarLinksInHtml($tekst);
+    } else {
+        $inhoud = htmlspecialchars($tekst, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+    }
     $tijd = date('H:i');
 
-    return "<div class='chat-message {$type}'><p>{$veilig}</p><span class='message-time'>{$tijd}</span></div>";
+    return "<div class='chat-message {$type}'><p>{$inhoud}</p><span class='message-time'>{$tijd}</span></div>";
 }
 
 // Voegt 1 bericht toe aan chatHistory voor deze cookie (maakt rij aan als die nog niet bestaat).

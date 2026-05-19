@@ -32,4 +32,12 @@ final class ChatGeschiedenisTest extends TestCase
         $this->assertSame([], laadConversationJsonArray(''));
         $this->assertSame([], laadConversationJsonArray(null));
     }
+
+    public function testBotUrlsWordenLinksInOpgeslagenHtml(): void
+    {
+        $html = maakChatBerichtHtml('bot', 'Kijk https://www.marioswitch.nl/Just_Dance_2018 voor info.');
+
+        $this->assertStringContainsString('<a href="https://www.marioswitch.nl/Just_Dance_2018"', $html);
+        $this->assertStringContainsString('Just_Dance_2018</a>', $html);
+    }
 }
