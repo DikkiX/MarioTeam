@@ -17,6 +17,7 @@
       <file>include/email_dashboard_helpers.php</file>
       <file>include/chat_functie_keuze.php</file>
       <file>include/chat_product_zoek.php</file>
+      <file>include/chat_geschiedenis.php</file>
     </include>
   </source>
 </phpunit>

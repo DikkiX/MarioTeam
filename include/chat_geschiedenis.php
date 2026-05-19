@@ -1,11 +1,58 @@
 <?php
 
-// Dit bestand slaat chatberichten op in de tabel chatHistory (HTML voor het scherm).
+// Dit bestand slaat chatberichten op in de tabel chatHistory (HTML + JSON).
 // Het wordt gebruikt door:
 // - api/chat/send.php (bericht van de klant)
 // - api/chat/worker.php (antwoord van Mr M)
 //
 // Doel: het gesprek blijft zichtbaar na verversen, net als bij de oude ChatGptMrM-flow.
+// JSON-formaat is hetzelfde als in ChatGptMrM.php: [{"user":"..."},{"assistant":"..."}, ...]
+
+// Zet het chat-type om naar de JSON-sleutel (user / assistant).
+function jsonSleutelVoorChatType(string $type): ?string
+{
+    if ($type === 'user') {
+        return 'user';
+    }
+    if ($type === 'bot') {
+        return 'assistant';
+    }
+
+    return null;
+}
+
+// Voegt 1 bericht toe aan de JSON-array (zelfde structuur als de oude chat).
+function voegToeAanConversationJsonArray(array $bestaand, string $type, string $tekst): array
+{
+    $sleutel = jsonSleutelVoorChatType($type);
+    if ($sleutel === null) {
+        return $bestaand;
+    }
+
+    $tekst = trim($tekst);
+    if ($tekst === '') {
+        return $bestaand;
+    }
+
+    $bestaand[] = [$sleutel => $tekst];
+
+    return $bestaand;
+}
+
+// Leest conversationJSON uit de database en maakt er een PHP-array van.
+function laadConversationJsonArray(?string $jsonTekst): array
+{
+    if (!is_string($jsonTekst) || trim($jsonTekst) === '') {
+        return [];
+    }
+
+    $data = json_decode($jsonTekst, true);
+    if (!is_array($data)) {
+        return [];
+    }
+
+    return $data;
+}
 
 // Maakt 1 chatregel als HTML (tijd staat naast de tekst, niet eroverheen).
 function maakChatBerichtHtml(string $type, string $tekst): string
@@ -36,21 +83,36 @@ function voegBerichtToeAanChatGeschiedenis(PDO $conn, string $cookie, string $ty
     }
 
     try {
-        $stmt = $conn->prepare('SELECT conversationHTML FROM chatHistory WHERE cookie = ? LIMIT 1');
+        $stmt = $conn->prepare('SELECT conversationJSON, conversationHTML FROM chatHistory WHERE cookie = ? LIMIT 1');
         $stmt->execute([$cookie]);
         $rij = $stmt->fetch();
 
-        if ($rij && isset($rij['conversationHTML'])) {
-            $nieuw = (string) $rij['conversationHTML'] . $html;
-            $update = $conn->prepare('UPDATE chatHistory SET conversationHTML = ? WHERE cookie = ?');
-            $update->execute([$nieuw, $cookie]);
+        if ($rij) {
+            $jsonArray = laadConversationJsonArray($rij['conversationJSON'] ?? '');
+            $jsonArray = voegToeAanConversationJsonArray($jsonArray, $type, $tekst);
+            $jsonTekst = json_encode($jsonArray, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+            if (!is_string($jsonTekst)) {
+                $jsonTekst = '[]';
+            }
+
+            $nieuwHtml = (string) ($rij['conversationHTML'] ?? '') . $html;
+            $update = $conn->prepare(
+                'UPDATE chatHistory SET conversationJSON = ?, conversationHTML = ? WHERE cookie = ?'
+            );
+            $update->execute([$jsonTekst, $nieuwHtml, $cookie]);
             return;
+        }
+
+        $jsonArray = voegToeAanConversationJsonArray([], $type, $tekst);
+        $jsonTekst = json_encode($jsonArray, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        if (!is_string($jsonTekst)) {
+            $jsonTekst = '[]';
         }
 
         $insert = $conn->prepare(
             'INSERT INTO chatHistory (cookie, conversationJSON, conversationHTML, page_info) VALUES (?, ?, ?, ?)'
         );
-        $insert->execute([$cookie, '', $html, 'ChatBotMrM queue']);
+        $insert->execute([$cookie, $jsonTekst, $html, 'ChatBotMrM queue']);
     } catch (Throwable $e) {
         // Geen crash: chat moet doorlopen als geschiedenis even niet kan.
     }
