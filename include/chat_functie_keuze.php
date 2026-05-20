@@ -5,7 +5,8 @@
 // - api/chat/worker.php (vlak vóór de OpenAI-call)
 //
 // Doel: de bot niet laten gokken over voorraad of spellen.
-// Maar bij ProductFinder eerst wél de oude stappen (5 vragen), en pas daarna de database.
+// Maar bij ProductFinder eerst de verkoopvragen — behalve bij vergelijking met een concrete game/franchise
+// of als de gebruiker expliciet direct suggesties wil; dan wordt zoek_productaanraders geforceerd.
 
 // Kijkt naar het bericht van de klant + het label uit system0.
 // Geeft terug: 'auto' (AI mag zelf kiezen) of 1 vaste functienaam.
@@ -30,8 +31,30 @@ function bepaalGeforceerdeFunctieKeuze(string $berichtTekst, string $assistant0 
         ];
     }
 
-    // Tijdens ProductFinder: geen database forceren. Eerst Mr M + verkoopvragen (VerkoopAdvies3).
+    // Zelfde patronen als hieronder: nodig vóór ProductFinder-blok (vergelijking / “alleen suggesties”).
+    $vraagtOmAanraders = preg_match(
+        '/\b(aanraden|aanrader|aanbevel|aanbevelen|aanbeveling|suggest|suggestie|suggesties|alternatief|soortgelijk|gelijke|vergelijkbaar|vergelijkbare|andere\s+games|andere\s+spellen)\b/i',
+        $t
+    ) === 1;
+    $vraagtOmVergelijking = preg_match(
+        '/\b(lijken\s+op|zoals|net\s+als|in\s+de\s+trant\s+van|vergelijkbaar\s+met|soort\s+als|op\s+.+\s+lijkt)\b/i',
+        $t
+    ) === 1;
+    $wilDirectZonderIntake = preg_match(
+        '/\b(alleen\s+suggesties?|alleen\s+namen|direct\s+(de\s+)?(spellen|titels|antwoord|aanbevelingen)|geen\s+(andere\s+)?vragen|niet\s+meer\s+vragen|stop\s+met\s+vragen|geen\s+intake|overslaan)\b/i',
+        $t
+    ) === 1;
+
+    // Tijdens ProductFinder: normaal eerst verkoopvragen — behalve vergelijk-vragen of expliciet direct advies.
     if ($isProductFinder) {
+        if ($vraagtOmVergelijking || $wilDirectZonderIntake) {
+            return [
+                'type' => 'function',
+                'function' => [
+                    'name' => 'zoek_productaanraders',
+                ],
+            ];
+        }
         return 'auto';
     }
 
@@ -50,15 +73,6 @@ function bepaalGeforceerdeFunctieKeuze(string $berichtTekst, string $assistant0 
     }
 
     // Vergelijkbare spellen (bijv. “lijken op Xenoblade”).
-    $vraagtOmAanraders = preg_match(
-        '/\b(aanraden|aanrader|suggest|suggestie|alternatief|soortgelijk|gelijke|vergelijkbaar|vergelijkbare|andere\s+games|andere\s+spellen)\b/i',
-        $t
-    ) === 1;
-    $vraagtOmVergelijking = preg_match(
-        '/\b(lijken\s+op|zoals|net\s+als|in\s+de\s+trant\s+van|vergelijkbaar\s+met|soort\s+als|op\s+.+\s+lijkt)\b/i',
-        $t
-    ) === 1;
-
     if ($vraagtOmAanraders || $vraagtOmVergelijking) {
         return [
             'type' => 'function',

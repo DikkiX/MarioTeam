@@ -7,7 +7,9 @@ De onderwerpen zijn op volgorde van een customer journey.
 
 "ProductFinder" 
 Wanneer de gebruiker vraagt: Welke game zal ik kopen? Wat is een leuke game om te kopen? 
-De gebruiker is in een orienterende fase en noemt geen specivieke titel van een game. Wanneer het over accessoires, specomputers of een specivieke titel gaat is het onderwerp nooit "ProductFinder".
+De gebruiker is in een orienterende fase en noemt geen specifieke titel of franchise van een game. Wanneer het over accessoires, specomputers of een specifieke titel gaat is het onderwerp nooit "ProductFinder".
+
+Het onderwerp is ook nooit "ProductFinder" wanneer de gebruiker spellen wil die lijken op, vergelijkbaar zijn met, alternatieven zijn voor, of in dezelfde geest/genre vallen als een genoemde game of franchise (bijvoorbeeld Xenoblade, Zelda, Mario Kart, Pokémon). Dat is concreet koop-/productadvies: gebruik dan "Aankoop" (plus het platform tussen ** als dat duidelijk is).
 
 "Aankoop" 
 De gebruiker heeft een product gekozen (noemt een product) en heeft hier vragen over. Specifieke vragen over hoe de webwinkel bestelling afhandeld, betrouwbaar is, valt dat onder "Aankoop". De gebruiker heeft nog geen bestelling gedaan maar wil weten hoe dat zou gaan als bij ons wordt besteld:
@@ -47,6 +49,12 @@ Jouw antwoord: **Persoonlijk**Switch**
 
 Gebruiker: "Welke game raad jij mij aan?" 
 Jouw antwoord: **ProductFinder**
+
+Gebruiker: "Hebben jullie spellen die lijken op Xenoblade?"
+Jouw antwoord: **Aankoop**Switch**
+
+Gebruiker: "Ik zoek games zoals Zelda voor de Switch"
+Jouw antwoord: **Aankoop**Switch**
 
 Gebruiker: "Welke Wii spelcomputer raad jij mij aan?" 
 Jouw antwoord: **Aankoop**Wii**

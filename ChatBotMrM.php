@@ -406,7 +406,9 @@ header('X-Robots-Tag: noindex, nofollow', true);
         <?php
         include_once $_SERVER['DOCUMENT_ROOT'] . "/include/db.inc";
         $conn = $conn ?? null;
-        if (($conn instanceof PDO) && isset($_COOKIE['chatbot_session'])) {
+        // ?nieuw=1 (of elk ?nieuw=): start zonder geschiedenis, ook als er nog oude cookie is.
+        $forceNieuwGesprek = isset($_GET['nieuw']);
+        if (($conn instanceof PDO) && isset($_COOKIE['chatbot_session']) && !$forceNieuwGesprek) {
             /////////////////////////////////////////////////
             //SELECT berichten	
             $cookie_value = $_COOKIE["chatbot_session"];    // Haal bestaande cookie-waarde op
@@ -606,6 +608,27 @@ header('X-Robots-Tag: noindex, nofollow', true);
 
 
         document.addEventListener('DOMContentLoaded', function() {
+
+            // Nieuw gesprek: vul in browserbalk ...?nieuw=1 — dan geen oude HTML en nieuwe sessie bij eerste bericht.
+            const urlParamsStart = new URLSearchParams(window.location.search);
+            if (urlParamsStart.has('nieuw')) {
+                document.cookie = 'chatbot_session=; path=/; max-age=0; SameSite=Lax';
+                urlParamsStart.delete('nieuw');
+                const rest = urlParamsStart.toString();
+                const gewoonPad = window.location.pathname + (rest ? ('?' + rest) : '') + window.location.hash;
+                history.replaceState({}, '', gewoonPad);
+                const cms = document.getElementById('chatMessages');
+                if (cms) {
+                    cms.innerHTML =
+                        '<div class=\'chat-message system\'>' +
+                        '<p>Nieuw gesprek. Aankoophulp, kletsen over games en antwoord op je vragen! ' +
+                        '<span class=\'message-time\'>' +
+                        String(new Date().getHours()).padStart(2, '0') + ':' +
+                        String(new Date().getMinutes()).padStart(2, '0') +
+                        '</span></p>' +
+                        '</div>';
+                }
+            }
 
             // Deze functie vraagt elke paar seconden:
             // "Is het antwoord al klaar?"

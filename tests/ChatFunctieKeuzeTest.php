@@ -58,10 +58,15 @@ final class ChatFunctieKeuzeTest extends TestCase
         $this->assertFalse(isVoorraadFollowUpVraag('hebben jullie danspellen?'));
     }
 
-    public function testProductFinderMetVergelijkingBlijftEerstAuto(): void
+    public function testProductFinderMetVergelijkingForceertAanraders(): void
     {
-        // ProductFinder = eerst verkoopvragen. Database-forceren komt pas na "Ik heb antwoord op al mijn vragen."
         $keuze = bepaalGeforceerdeFunctieKeuze('Hebben jullie spellen die lijken op Xenoblade?', 'ProductFinder');
-        $this->assertSame('auto', $keuze);
+        $this->assertSame('zoek_productaanraders', $this->functieNaamUitKeuze($keuze));
+    }
+
+    public function testProductFinderMetAlleenSuggestiesForceertAanraders(): void
+    {
+        $keuze = bepaalGeforceerdeFunctieKeuze('Ik wil alleen suggesties, geen andere vragen', 'ProductFinder');
+        $this->assertSame('zoek_productaanraders', $this->functieNaamUitKeuze($keuze));
     }
 }
