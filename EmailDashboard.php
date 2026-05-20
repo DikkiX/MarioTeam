@@ -2399,51 +2399,174 @@ if (!defined('EMAIL_DASHBOARD_LIB_ONLY')) {
         $zoekTerm = substr($zoekTerm, 0, 200);
     }
 
-    function bouwEmailDashboardHelpModalHtml()
+    function bouwEmailDashboardHelpTourHtml()
     {
-        // US28: help-popup met uitleg over het dashboard.
-        $sectie = static function ($titel, $tekst) {
-            return '<section style="margin-bottom:16px;">'
-                . '<h3 style="margin:0 0 6px; font-size:15px; color:#111827;">' . e($titel) . '</h3>'
-                . '<p style="margin:0; color:#374151; line-height:1.55; font-size:14px;">' . $tekst . '</p>'
-                . '</section>';
-        };
+        // US28: interactieve rondleiding door het dashboard.
+        $html = '<div id="email-dashboard-tour-overlay" hidden style="position:fixed; inset:0; z-index:1000; pointer-events:none;"></div>';
+        $html .= '<div id="email-dashboard-tour-spotlight" hidden style="position:fixed; z-index:1001; border:2px solid #60a5fa; border-radius:12px; box-shadow:0 0 0 9999px rgba(17,24,39,0.55); pointer-events:none; transition:top .2s ease, left .2s ease, width .2s ease, height .2s ease;"></div>';
+        $html .= '<div id="email-dashboard-tour-card" hidden role="dialog" aria-modal="true" aria-labelledby="email-dashboard-tour-title" style="position:fixed; z-index:1002; width:min(360px, calc(100vw - 32px)); background:#f3f4f6; border:1px solid #9ca3af; border-radius:14px; box-shadow:0 20px 40px rgba(0,0,0,0.18); padding:14px 16px; box-sizing:border-box;">';
+        $html .= '<div id="email-dashboard-tour-step-label" style="font-size:12px; font-weight:700; color:#6b7280; margin-bottom:4px;">Stap 1 van 1</div>';
+        $html .= '<div id="email-dashboard-tour-title" style="font-weight:800; font-size:16px; color:#111827; margin-bottom:8px;">Help</div>';
+        $html .= '<div id="email-dashboard-tour-text" style="color:#374151; font-size:14px; line-height:1.55; margin-bottom:12px;"></div>';
+        $html .= '<label style="display:flex; align-items:center; gap:8px; color:#374151; font-size:13px; cursor:pointer; margin-bottom:12px;"><input type="checkbox" id="email-dashboard-tour-hide-auto"> Toon niet meer automatisch</label>';
+        $html .= '<div style="display:flex; flex-wrap:wrap; gap:8px; justify-content:flex-end;">';
+        $html .= '<button type="button" id="email-dashboard-tour-skip" style="background:#e5e7eb; border:1px solid #9ca3af; color:#111827; font-weight:700; padding:8px 12px; border-radius:10px; cursor:pointer;">Overslaan</button>';
+        $html .= '<button type="button" id="email-dashboard-tour-prev" style="background:#e5e7eb; border:1px solid #9ca3af; color:#111827; font-weight:700; padding:8px 12px; border-radius:10px; cursor:pointer;">Vorige</button>';
+        $html .= '<button type="button" id="email-dashboard-tour-next" style="background:#60a5fa; border:1px solid #3b82f6; color:#111827; font-weight:800; padding:8px 12px; border-radius:10px; cursor:pointer;">Volgende</button>';
+        $html .= '</div></div>';
 
-        $inhoud = '';
-        $inhoud .= $sectie('Overzicht', 'Links zie je alle openstaande AI-concepten (status <strong>draft</strong>). Klik een concept om de klantmail en het concept-antwoord te openen. Gebruik de zoekbalk om te filteren op e-mailadres, onderwerp of tekst in het concept.');
-        $inhoud .= $sectie('Detail &amp; versturen', 'Rechts verschijnt de gespreksgeschiedenis uit Gmail. Het AI-concept staat in het tekstvak; pas het aan en klik op <strong>Verstuur mail via Gmail API</strong> om te antwoorden in dezelfde thread. Met <strong>Doorsturen (intern)</strong> stuur je de mail door naar een collega of leverancier.');
-        $inhoud .= $sectie('Sync op de achtergrond', 'Het dashboard laadt direct vanuit de database. Nieuwe ongelezen mails uit Gmail worden op de achtergrond opgehaald (maximaal ongeveer 1 sync per 15 seconden). Ververs de pagina om de nieuwste concepten in de lijst te zien.');
-        $inhoud .= $sectie('Instellingen', 'Via <strong>Instellingen</strong> pas je de <strong>Tone of voice</strong> van de AI aan, stel je <strong>Regels &amp; filters</strong> in (bijv. bepaalde afzenders negeren) en beheer je <strong>E-mail aliassen</strong> voor het versturen.');
-        $inhoud .= $sectie('Gmail-koppeling', 'Als Gmail niet gekoppeld is, zie je een melding met een koppelknop. Klik daarop en log in met het Mario Team-account. Zonder koppeling kun je geen gesprekken laden of mails versturen.');
+        $html .= <<<'JS'
+<script>(function(){
+var overlay=document.getElementById("email-dashboard-tour-overlay");
+var spotlight=document.getElementById("email-dashboard-tour-spotlight");
+var card=document.getElementById("email-dashboard-tour-card");
+var stepLabel=document.getElementById("email-dashboard-tour-step-label");
+var titleEl=document.getElementById("email-dashboard-tour-title");
+var textEl=document.getElementById("email-dashboard-tour-text");
+var openBtn=document.getElementById("email-dashboard-help-open");
+var prevBtn=document.getElementById("email-dashboard-tour-prev");
+var nextBtn=document.getElementById("email-dashboard-tour-next");
+var skipBtn=document.getElementById("email-dashboard-tour-skip");
+var hideAuto=document.getElementById("email-dashboard-tour-hide-auto");
+var storageKey="email_dashboard_tour_hide_auto";
+var stepIndex=0;
+var steps=[];
 
-        $html = '<div id="email-dashboard-help-overlay" hidden style="position:fixed; inset:0; background:rgba(17,24,39,0.45); z-index:1000; display:flex; align-items:center; justify-content:center; padding:16px; box-sizing:border-box;">';
-        $html .= '<div role="dialog" aria-modal="true" aria-labelledby="email-dashboard-help-title" style="width:100%; max-width:640px; max-height:calc(100vh - 32px); background:#f3f4f6; border:1px solid #9ca3af; border-radius:14px; display:flex; flex-direction:column; box-shadow:0 20px 40px rgba(0,0,0,0.18);">';
-        $html .= '<div style="display:flex; align-items:center; justify-content:space-between; gap:12px; padding:14px 16px; border-bottom:1px solid #9ca3af;">';
-        $html .= '<div id="email-dashboard-help-title" style="font-weight:800; font-size:17px; color:#111827;">Help — E-maildashboard</div>';
-        $html .= '<button type="button" id="email-dashboard-help-close-x" aria-label="Sluiten" style="background:#e5e7eb; border:1px solid #9ca3af; color:#111827; font-weight:800; width:34px; height:34px; border-radius:10px; cursor:pointer; line-height:1;">&times;</button>';
-        $html .= '</div>';
-        $html .= '<div style="padding:14px 16px; overflow-y:auto;">' . $inhoud . '</div>';
-        $html .= '<div style="display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:10px; padding:12px 16px; border-top:1px solid #9ca3af;">';
-        $html .= '<label style="display:flex; align-items:center; gap:8px; color:#374151; font-size:13px; cursor:pointer;"><input type="checkbox" id="email-dashboard-help-hide-auto"> Toon niet meer automatisch</label>';
-        $html .= '<button type="button" id="email-dashboard-help-close" style="background:#60a5fa; border:1px solid #3b82f6; color:#111827; font-weight:800; padding:10px 14px; border-radius:10px; cursor:pointer;">Sluiten</button>';
-        $html .= '</div></div></div>';
+function isSettingsPage(){
+  return !!document.getElementById("email-dashboard-settings-menu");
+}
 
-        $html .= '<script>(function(){';
-        $html .= 'var overlay=document.getElementById("email-dashboard-help-overlay");';
-        $html .= 'var openBtn=document.getElementById("email-dashboard-help-open");';
-        $html .= 'var closeBtn=document.getElementById("email-dashboard-help-close");';
-        $html .= 'var closeX=document.getElementById("email-dashboard-help-close-x");';
-        $html .= 'var hideAuto=document.getElementById("email-dashboard-help-hide-auto");';
-        $html .= 'var storageKey="email_dashboard_help_hide_auto";';
-        $html .= 'function openHelp(){if(!overlay)return;overlay.hidden=false;document.body.style.overflow="hidden";}';
-        $html .= 'function closeHelp(){if(!overlay)return;overlay.hidden=true;document.body.style.overflow="";if(hideAuto&&hideAuto.checked){try{localStorage.setItem(storageKey,"1");}catch(e){}}}';
-        $html .= 'if(openBtn){openBtn.addEventListener("click",openHelp);}';
-        $html .= 'if(closeBtn){closeBtn.addEventListener("click",closeHelp);}';
-        $html .= 'if(closeX){closeX.addEventListener("click",closeHelp);}';
-        $html .= 'if(overlay){overlay.addEventListener("click",function(ev){if(ev.target===overlay){closeHelp();}});}';
-        $html .= 'document.addEventListener("keydown",function(ev){if(ev.key==="Escape"&&!overlay.hidden){closeHelp();}});';
-        $html .= 'try{if(localStorage.getItem(storageKey)!=="1"){openHelp();}}catch(e){}';
-        $html .= '})();</script>';
+function buildSteps(){
+  if(isSettingsPage()){
+    return [
+      {target:null, title:"Welkom bij Instellingen", text:"Hier pas je het e-maildashboard aan. Deze rondleiding legt de belangrijkste onderdelen uit.", placement:"center"},
+      {target:"#email-dashboard-settings-menu", title:"Instellingenmenu", text:"Kies links wat je wilt beheren: Tone of voice, Regels & filters of E-mail aliassen.", placement:"right"},
+      {target:"#email-dashboard-settings-content", title:"Instellingen inhoud", text:"Rechts bewerk je de gekozen instelling. Wijzigingen sla je op met de blauwe Opslaan-knop.", placement:"left"},
+      {target:"#email-dashboard-link-overzicht", title:"Terug naar overzicht", text:"Via Overzicht ga je terug naar de conceptenlijst om klantmails te behandelen.", placement:"bottom"},
+      {target:"#email-dashboard-help-open", title:"Help opnieuw starten", text:"Je kunt deze rondleiding altijd opnieuw openen via Help in de header.", placement:"bottom"}
+    ];
+  }
+  return [
+    {target:null, title:"Welkom bij het e-maildashboard", text:"Deze interactieve rondleiding laat zien hoe je AI-concepten bekijkt, aanpast en verstuurt.", placement:"center"},
+    {target:"#email-dashboard-lijst", title:"Conceptenlijst", text:"Hier staan alle openstaande AI-concepten. Klik een regel om de klantmail en het concept-antwoord te openen.", placement:"right"},
+    {target:"#email-dashboard-zoeken", title:"Zoeken", text:"Filter op e-mailadres, onderwerp of tekst in het concept. Gebruik Wissen om de zoekopdracht te legen.", placement:"bottom"},
+    {target:"#email-dashboard-detail", title:"Detail & gesprek", text:"Rechts zie je de Gmail-gespreksgeschiedenis. Zonder selectie staat hier een korte uitleg; na klikken op een concept zie je de volledige thread.", placement:"left"},
+    {target:"#email-dashboard-concept-acties", title:"Concept bewerken & versturen", text:"Pas het AI-concept aan in het tekstvak. Verstuur het antwoord naar de klant of stuur de mail intern door naar een collega.", placement:"top", optional:true},
+    {target:"#email-dashboard-link-instellingen", title:"Instellingen", text:"Beheer tone of voice, regels/filters en e-mail aliassen voor het versturen.", placement:"bottom"},
+    {target:"#email-dashboard-lijst", title:"Achtergrond-sync", text:"Het dashboard laadt direct vanuit de database. Nieuwe ongelezen Gmail-mails worden op de achtergrond opgehaald (max. ca. 1 sync per 15 sec.). Ververs de pagina voor de nieuwste concepten.", placement:"right"},
+    {target:null, title:"Gmail-koppeling", text:"Als Gmail niet gekoppeld is, zie je in het detail een koppelknop. Zonder koppeling kun je geen gesprekken laden of mails versturen.", placement:"center"},
+    {target:"#email-dashboard-help-open", title:"Klaar!", text:"Je bent klaar met de rondleiding. Klik later opnieuw op Help om deze tour op te starten.", placement:"bottom"}
+  ];
+}
+
+function activeSteps(){
+  return steps.filter(function(step){
+    if(step.optional && step.target && !document.querySelector(step.target)){return false;}
+    return true;
+  });
+}
+
+function saveHideAuto(){
+  if(hideAuto&&hideAuto.checked){
+    try{localStorage.setItem(storageKey,"1");}catch(e){}
+  }
+}
+
+function hideTour(){
+  if(overlay){overlay.hidden=true;}
+  if(spotlight){spotlight.hidden=true;}
+  if(card){card.hidden=true;}
+  document.body.style.overflow="";
+  saveHideAuto();
+}
+
+function positionCard(target, placement){
+  if(!card){return;}
+  var pad=12;
+  var rect=target?target.getBoundingClientRect():null;
+  var cardRect=card.getBoundingClientRect();
+  var top=Math.max(pad, (window.innerHeight-cardRect.height)/2);
+  var left=Math.max(pad, (window.innerWidth-cardRect.width)/2);
+  if(rect){
+    if(placement==="right"){left=rect.right+pad; top=rect.top;}
+    else if(placement==="left"){left=rect.left-cardRect.width-pad; top=rect.top;}
+    else if(placement==="bottom"){left=rect.left; top=rect.bottom+pad;}
+    else if(placement==="top"){left=rect.left; top=rect.top-cardRect.height-pad;}
+    else {left=Math.max(pad, rect.left); top=rect.bottom+pad;}
+    if(left+cardRect.width>window.innerWidth-pad){left=window.innerWidth-cardRect.width-pad;}
+    if(left<pad){left=pad;}
+    if(top+cardRect.height>window.innerHeight-pad){top=Math.max(pad, window.innerHeight-cardRect.height-pad);}
+    if(top<pad){top=pad;}
+  }
+  card.style.top=top+"px";
+  card.style.left=left+"px";
+}
+
+function positionSpotlight(target){
+  if(!spotlight){return;}
+  if(!target){
+    spotlight.hidden=true;
+    return;
+  }
+  var rect=target.getBoundingClientRect();
+  var pad=6;
+  spotlight.hidden=false;
+  spotlight.style.top=(rect.top-pad)+"px";
+  spotlight.style.left=(rect.left-pad)+"px";
+  spotlight.style.width=(rect.width+pad*2)+"px";
+  spotlight.style.height=(rect.height+pad*2)+"px";
+}
+
+function renderStep(){
+  var list=activeSteps();
+  if(!list.length){hideTour();return;}
+  if(stepIndex<0){stepIndex=0;}
+  if(stepIndex>=list.length){hideTour();return;}
+  var step=list[stepIndex];
+  var target=step.target?document.querySelector(step.target):null;
+  if(step.target && !target && !step.optional){
+    stepIndex+=1;
+    renderStep();
+    return;
+  }
+  if(target){target.scrollIntoView({block:"nearest", behavior:"smooth"});}
+  if(overlay){overlay.hidden=false;}
+  if(card){card.hidden=false;}
+  document.body.style.overflow="hidden";
+  if(stepLabel){stepLabel.textContent="Stap "+(stepIndex+1)+" van "+list.length;}
+  if(titleEl){titleEl.textContent=step.title||"";}
+  if(textEl){textEl.textContent=step.text||"";}
+  positionSpotlight(target);
+  positionCard(target, step.placement||"bottom");
+  if(prevBtn){prevBtn.disabled=stepIndex===0;}
+  if(nextBtn){nextBtn.textContent=stepIndex===list.length-1?"Afsluiten":"Volgende";}
+}
+
+function startTour(reset){
+  steps=buildSteps();
+  stepIndex=reset?0:stepIndex;
+  renderStep();
+}
+
+if(openBtn){openBtn.addEventListener("click",function(){stepIndex=0;startTour(true);});}
+if(prevBtn){prevBtn.addEventListener("click",function(){stepIndex-=1;renderStep();});}
+if(nextBtn){nextBtn.addEventListener("click",function(){
+  var list=activeSteps();
+  if(stepIndex>=list.length-1){hideTour();return;}
+  stepIndex+=1;
+  renderStep();
+});}
+if(skipBtn){skipBtn.addEventListener("click",hideTour);}
+document.addEventListener("keydown",function(ev){
+  if(!card||card.hidden){return;}
+  if(ev.key==="Escape"){hideTour();}
+  else if(ev.key==="ArrowRight"){nextBtn&&nextBtn.click();}
+  else if(ev.key==="ArrowLeft"&&prevBtn&&!prevBtn.disabled){prevBtn.click();}
+});
+window.addEventListener("resize",function(){if(card&&!card.hidden){renderStep();}});
+try{if(localStorage.getItem(storageKey)!=="1"){startTour(true);}}catch(e){}
+})();</script>
+JS;
 
         return $html;
     }
@@ -2466,16 +2589,16 @@ if (!defined('EMAIL_DASHBOARD_LIB_ONLY')) {
         $html .= '<div style="max-width: 1200px; margin:0 auto;">';
         $html .= '<div style="display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:12px; margin-bottom:14px; padding:10px 12px; background:#f3f4f6; border:1px solid #9ca3af; border-radius:12px;">';
         $html .= '<div style="font-weight:800; font-size:18px;">Mario Team - AI E-mail Concepten Module</div>';
-        $html .= '<div style="display:flex; gap:14px; align-items:center;">';
-        $html .= '<a href="/EmailDashboard.php" style="color:#111827; text-decoration:none;">Overzicht</a>';
-        $html .= '<a href="/EmailDashboard.php?settings=1" style="color:#111827; text-decoration:none;">Instellingen</a>';
+        $html .= '<div style="display:flex; gap:14px; align-items:center;" id="email-dashboard-header-nav">';
+        $html .= '<a href="/EmailDashboard.php" id="email-dashboard-link-overzicht" style="color:#111827; text-decoration:none;">Overzicht</a>';
+        $html .= '<a href="/EmailDashboard.php?settings=1" id="email-dashboard-link-instellingen" style="color:#111827; text-decoration:none;">Instellingen</a>';
         $html .= '<button type="button" id="email-dashboard-help-open" style="background:transparent; border:none; color:#111827; font:inherit; font-weight:600; padding:0; cursor:pointer;">Help</button>';
         $html .= '<a href="/EmailDashboard.php?logout=1" style="color:#111827; text-decoration:none;">Uitloggen</a>';
         $html .= '</div></div>';
         $html .= $msgHtml;
         $html .= $contentHtml;
         $html .= '</div>';
-        $html .= bouwEmailDashboardHelpModalHtml();
+        $html .= bouwEmailDashboardHelpTourHtml();
         $html .= '</body></html>';
         return $html;
     }
@@ -2493,7 +2616,7 @@ if (!defined('EMAIL_DASHBOARD_LIB_ONLY')) {
             $toneValue = '';
         }
 
-        $menu = '<div style="background:#f3f4f6; border:1px solid #9ca3af; border-radius:14px; overflow:hidden;">';
+        $menu = '<div id="email-dashboard-settings-menu" style="background:#f3f4f6; border:1px solid #9ca3af; border-radius:14px; overflow:hidden;">';
         $menu .= '<div style="padding:12px 14px; border-bottom:1px solid #9ca3af; font-weight:800;">Instellingen</div>';
         $menu .= '<div style="padding:10px;">';
         $menu .= '<a href="/EmailDashboard.php?settings=1&amp;tab=tone" style="display:block; padding:10px 12px; border-radius:10px; text-decoration:none; border:1px solid ' . ($activeTone ? '#60a5fa' : '#9ca3af') . '; background:' . ($activeTone ? '#bfdbfe' : '#e5e7eb') . '; color:#111827; font-weight:800;">Tone of voice</a>';
@@ -2503,7 +2626,7 @@ if (!defined('EMAIL_DASHBOARD_LIB_ONLY')) {
         $menu .= '<a href="/EmailDashboard.php?settings=1&amp;tab=aliases" style="display:block; padding:10px 12px; border-radius:10px; text-decoration:none; border:1px solid ' . ($activeAliases ? '#60a5fa' : '#9ca3af') . '; background:' . ($activeAliases ? '#bfdbfe' : '#e5e7eb') . '; color:#111827; font-weight:800;">E-mail aliassen</a>';
         $menu .= '</div></div>';
 
-        $content = '<div style="background:#f3f4f6; border:1px solid #9ca3af; border-radius:14px; padding:14px 16px;">';
+        $content = '<div id="email-dashboard-settings-content" style="background:#f3f4f6; border:1px solid #9ca3af; border-radius:14px; padding:14px 16px;">';
         if ($activeTone) {
             $content .= '<div style="font-weight:800; margin-bottom:8px;">Tone of voice</div>';
             $content .= '<div style="color:#6b7280; margin-bottom:10px;">Deze tekst wordt toegevoegd aan de systeem-instructies van de AI.</div>';
@@ -2818,10 +2941,10 @@ if (!defined('EMAIL_DASHBOARD_LIB_ONLY')) {
         }
     }
 
-    $lijstHtml = '<div style="background:#f3f4f6; border:1px solid #9ca3af; border-radius:14px; overflow:hidden;">';
+    $lijstHtml = '<div id="email-dashboard-lijst" style="background:#f3f4f6; border:1px solid #9ca3af; border-radius:14px; overflow:hidden;">';
     $lijstHtml .= '<div style="padding:12px 14px; border-bottom:1px solid #9ca3af;">';
     $lijstHtml .= '<div style="font-weight:800;">Openstaande Concepten (Lijst)</div>';
-    $lijstHtml .= '<div style="margin-top:8px;">';
+    $lijstHtml .= '<div id="email-dashboard-zoeken" style="margin-top:8px;">';
     $lijstHtml .= '<form method="get" action="/EmailDashboard.php" style="display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin:0;">';
     if ($id > 0) {
         $lijstHtml .= '<input type="hidden" name="id" value="' . e((string) $id) . '">';
@@ -2921,7 +3044,7 @@ if (!defined('EMAIL_DASHBOARD_LIB_ONLY')) {
     }
     $lijstHtml .= '</div>';
 
-    $detailHtml = '<div style="background:#f3f4f6; border:1px solid #9ca3af; border-radius:14px; padding:12px 14px; min-height:420px;">';
+    $detailHtml = '<div id="email-dashboard-detail" style="background:#f3f4f6; border:1px solid #9ca3af; border-radius:14px; padding:12px 14px; min-height:420px;">';
     if (!$concept) {
         $detailHtml .= '<div style="font-weight:800; margin-bottom:10px;">Geselecteerd Concept</div>';
         $detailHtml .= '<div style="color:#6b7280;">Klik links een concept aan om de originele klantmail en het AI-concept te bekijken.</div>';
@@ -3163,7 +3286,7 @@ if (!defined('EMAIL_DASHBOARD_LIB_ONLY')) {
         $detailHtml .= '</div>';
         $detailHtml .= '</div>';
 
-        $detailHtml .= '<div style="border:1px solid #9ca3af; background:#ffffff; border-radius:12px; padding:10px 12px;">';
+        $detailHtml .= '<div id="email-dashboard-concept-acties" style="border:1px solid #9ca3af; background:#ffffff; border-radius:12px; padding:10px 12px;">';
         $detailHtml .= '<div style="font-weight:800; margin-bottom:6px;">AI Gegenereerd Draft (Bewerkbaar):</div>';
         $detailHtml .= '<form method="post" action="/EmailDashboard.php?id=' . urlencode((string) $concept['id']) . '">';
         $detailHtml .= '<input type="hidden" name="csrf" value="' . e($csrf) . '">';
