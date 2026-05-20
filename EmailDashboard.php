@@ -2399,6 +2399,55 @@ if (!defined('EMAIL_DASHBOARD_LIB_ONLY')) {
         $zoekTerm = substr($zoekTerm, 0, 200);
     }
 
+    function bouwEmailDashboardHelpModalHtml()
+    {
+        // US28: help-popup met uitleg over het dashboard.
+        $sectie = static function ($titel, $tekst) {
+            return '<section style="margin-bottom:16px;">'
+                . '<h3 style="margin:0 0 6px; font-size:15px; color:#111827;">' . e($titel) . '</h3>'
+                . '<p style="margin:0; color:#374151; line-height:1.55; font-size:14px;">' . $tekst . '</p>'
+                . '</section>';
+        };
+
+        $inhoud = '';
+        $inhoud .= $sectie('Overzicht', 'Links zie je alle openstaande AI-concepten (status <strong>draft</strong>). Klik een concept om de klantmail en het concept-antwoord te openen. Gebruik de zoekbalk om te filteren op e-mailadres, onderwerp of tekst in het concept.');
+        $inhoud .= $sectie('Detail &amp; versturen', 'Rechts verschijnt de gespreksgeschiedenis uit Gmail. Het AI-concept staat in het tekstvak; pas het aan en klik op <strong>Verstuur mail via Gmail API</strong> om te antwoorden in dezelfde thread. Met <strong>Doorsturen (intern)</strong> stuur je de mail door naar een collega of leverancier.');
+        $inhoud .= $sectie('Sync op de achtergrond', 'Het dashboard laadt direct vanuit de database. Nieuwe ongelezen mails uit Gmail worden op de achtergrond opgehaald (maximaal ongeveer 1 sync per 15 seconden). Ververs de pagina om de nieuwste concepten in de lijst te zien.');
+        $inhoud .= $sectie('Instellingen', 'Via <strong>Instellingen</strong> pas je de <strong>Tone of voice</strong> van de AI aan, stel je <strong>Regels &amp; filters</strong> in (bijv. bepaalde afzenders negeren) en beheer je <strong>E-mail aliassen</strong> voor het versturen.');
+        $inhoud .= $sectie('Gmail-koppeling', 'Als Gmail niet gekoppeld is, zie je een melding met een koppelknop. Klik daarop en log in met het Mario Team-account. Zonder koppeling kun je geen gesprekken laden of mails versturen.');
+
+        $html = '<div id="email-dashboard-help-overlay" hidden style="position:fixed; inset:0; background:rgba(17,24,39,0.45); z-index:1000; display:flex; align-items:center; justify-content:center; padding:16px; box-sizing:border-box;">';
+        $html .= '<div role="dialog" aria-modal="true" aria-labelledby="email-dashboard-help-title" style="width:100%; max-width:640px; max-height:calc(100vh - 32px); background:#f3f4f6; border:1px solid #9ca3af; border-radius:14px; display:flex; flex-direction:column; box-shadow:0 20px 40px rgba(0,0,0,0.18);">';
+        $html .= '<div style="display:flex; align-items:center; justify-content:space-between; gap:12px; padding:14px 16px; border-bottom:1px solid #9ca3af;">';
+        $html .= '<div id="email-dashboard-help-title" style="font-weight:800; font-size:17px; color:#111827;">Help — E-maildashboard</div>';
+        $html .= '<button type="button" id="email-dashboard-help-close-x" aria-label="Sluiten" style="background:#e5e7eb; border:1px solid #9ca3af; color:#111827; font-weight:800; width:34px; height:34px; border-radius:10px; cursor:pointer; line-height:1;">&times;</button>';
+        $html .= '</div>';
+        $html .= '<div style="padding:14px 16px; overflow-y:auto;">' . $inhoud . '</div>';
+        $html .= '<div style="display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:10px; padding:12px 16px; border-top:1px solid #9ca3af;">';
+        $html .= '<label style="display:flex; align-items:center; gap:8px; color:#374151; font-size:13px; cursor:pointer;"><input type="checkbox" id="email-dashboard-help-hide-auto"> Toon niet meer automatisch</label>';
+        $html .= '<button type="button" id="email-dashboard-help-close" style="background:#60a5fa; border:1px solid #3b82f6; color:#111827; font-weight:800; padding:10px 14px; border-radius:10px; cursor:pointer;">Sluiten</button>';
+        $html .= '</div></div></div>';
+
+        $html .= '<script>(function(){';
+        $html .= 'var overlay=document.getElementById("email-dashboard-help-overlay");';
+        $html .= 'var openBtn=document.getElementById("email-dashboard-help-open");';
+        $html .= 'var closeBtn=document.getElementById("email-dashboard-help-close");';
+        $html .= 'var closeX=document.getElementById("email-dashboard-help-close-x");';
+        $html .= 'var hideAuto=document.getElementById("email-dashboard-help-hide-auto");';
+        $html .= 'var storageKey="email_dashboard_help_hide_auto";';
+        $html .= 'function openHelp(){if(!overlay)return;overlay.hidden=false;document.body.style.overflow="hidden";}';
+        $html .= 'function closeHelp(){if(!overlay)return;overlay.hidden=true;document.body.style.overflow="";if(hideAuto&&hideAuto.checked){try{localStorage.setItem(storageKey,"1");}catch(e){}}}';
+        $html .= 'if(openBtn){openBtn.addEventListener("click",openHelp);}';
+        $html .= 'if(closeBtn){closeBtn.addEventListener("click",closeHelp);}';
+        $html .= 'if(closeX){closeX.addEventListener("click",closeHelp);}';
+        $html .= 'if(overlay){overlay.addEventListener("click",function(ev){if(ev.target===overlay){closeHelp();}});}';
+        $html .= 'document.addEventListener("keydown",function(ev){if(ev.key==="Escape"&&!overlay.hidden){closeHelp();}});';
+        $html .= 'try{if(localStorage.getItem(storageKey)!=="1"){openHelp();}}catch(e){}';
+        $html .= '})();</script>';
+
+        return $html;
+    }
+
     function renderLayout($titel, $contentHtml, $melding, $meldingType)
     {
         // Centrale layout (bovenbalk + melding + content).
@@ -2420,11 +2469,14 @@ if (!defined('EMAIL_DASHBOARD_LIB_ONLY')) {
         $html .= '<div style="display:flex; gap:14px; align-items:center;">';
         $html .= '<a href="/EmailDashboard.php" style="color:#111827; text-decoration:none;">Overzicht</a>';
         $html .= '<a href="/EmailDashboard.php?settings=1" style="color:#111827; text-decoration:none;">Instellingen</a>';
+        $html .= '<button type="button" id="email-dashboard-help-open" style="background:transparent; border:none; color:#111827; font:inherit; font-weight:600; padding:0; cursor:pointer;">Help</button>';
         $html .= '<a href="/EmailDashboard.php?logout=1" style="color:#111827; text-decoration:none;">Uitloggen</a>';
         $html .= '</div></div>';
         $html .= $msgHtml;
         $html .= $contentHtml;
-        $html .= '</div></body></html>';
+        $html .= '</div>';
+        $html .= bouwEmailDashboardHelpModalHtml();
+        $html .= '</body></html>';
         return $html;
     }
 
