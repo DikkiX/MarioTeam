@@ -599,19 +599,48 @@ function parseerEmailAdresUitFromHeader($fromHeader)
     return filter_var($candidate, FILTER_VALIDATE_EMAIL) ? (string) $candidate : '';
 }
 
-function roepOpenAiAanVoorEmailConcept($onderwerp, $klantTekst)
+function haalDashboardSettingVoorGmailUnread(?PDO $conn, string $key): string
+{
+    // Zelfde bron als EmailDashboard: dashboard_settings (o.a. tone_of_voice).
+    // Geen schema-migratie hier: tabel bestaat gewoonlijk al via het dashboard.
+    if (!($conn instanceof PDO)) {
+        return '';
+    }
+    try {
+        $stmt = $conn->prepare('SELECT setting_value FROM dashboard_settings WHERE setting_key = :k LIMIT 1');
+        $stmt->execute([':k' => $key]);
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+        if (!is_array($row) || !isset($row['setting_value'])) {
+            return '';
+        }
+
+        return (string) $row['setting_value'];
+    } catch (Throwable) {
+        return '';
+    }
+}
+
+function roepOpenAiAanVoorEmailConcept($onderwerp, $klantTekst, $conn = null)
 {
     // Dit stuurt de klantmail naar OpenAI en vraagt om een concept-antwoord.
+    // Zelfde systeemprompt + tone als EmailDashboard::roepOpenAiAanVoorEmailConcept
+    // (zonder FAQ/order-DB injectie; die doet het dashboard apart).
     $apiKey = getProjectEnvValue('OPENAI_API_KEY');
     if ($apiKey === null || $apiKey === '') {
         return ['ok' => false, 'error' => 'OPENAI_API_KEY ontbreekt in .env.'];
     }
 
-    $system = 'Je schrijft een concept-antwoord voor de klantenservice van de webshops van MarioTeam. Schrijf in het Nederlands. Als informatie ontbreekt, stel eerst korte, duidelijke vragen. Geef geen exacte voorraadaantallen. Als de klant om ordergegevens vraagt, vraag eerst om bestelnummer + e-mailadres. Geef alleen het antwoord (geen uitleg over je stappen).';
+    $system = 'Je schrijft een concept-antwoord voor de klantenservice van de webshops van MarioTeam. Schrijf in het Nederlands. Als informatie ontbreekt, stel eerst korte, duidelijke vragen. Geef geen exacte voorraadaantallen. Als de klant om ordergegevens vraagt: vraag alleen om ontbrekende gegevens (bestelnummer en/of e-mailadres). Als ze al in de tekst staan, vraag niet om bevestiging maar gebruik ze. Als er orderdata uit de database is meegegeven, baseer je antwoord daarop en verzin niets. Als order lookup NIET GEVONDEN is (of niet beschikbaar): zeg expliciet dat je de bestelling met deze combinatie (bestelnummer + e-mailadres) niet kunt terugvinden, dat dit vaak een typefout of ander e-mailadres is, en vraag de klant om te controleren. Zeg in dat geval niet dat de bestelling bestaat/ontvangen is en noem geen verzendstatus of track&trace. Als de klant naar actuele prijs/voorraad vraagt, zeg dat je dat niet live kunt checken in e-mail en verwijs naar de website of de chat. Geef alleen het antwoord (geen uitleg over je stappen).';
+    $tone = haalDashboardSettingVoorGmailUnread(($conn instanceof PDO) ? $conn : null, 'tone_of_voice');
+    if (trim($tone) !== '') {
+        $system .= "\n\nTone of voice instructies:\n" . trim($tone);
+    }
     $user = "Onderwerp: " . (string) $onderwerp . "\n\nKlantmail:\n" . (string) $klantTekst;
 
+    $model = function_exists('getChatModelName') ? getChatModelName() : 'gpt-4.1-mini';
+
     $data = [
-        'model' => 'gpt-4.1-mini',
+        'model' => $model,
         'messages' => [
             ['role' => 'system', 'content' => $system],
             ['role' => 'user', 'content' => $user],
@@ -869,7 +898,7 @@ foreach ($mailItems as $item) {
     }
 
     // OpenAI maakt het concept-antwoord.
-    $ai = roepOpenAiAanVoorEmailConcept($onderwerp, $tekst);
+    $ai = roepOpenAiAanVoorEmailConcept($onderwerp, $tekst, $conn);
     if (empty($ai['ok'])) {
         $err = isset($ai['error']) ? (string) $ai['error'] : 'Onbekende OpenAI fout';
         $aantalFouten++;
