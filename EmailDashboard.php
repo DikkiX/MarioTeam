@@ -870,6 +870,82 @@ function formatteerGmailOntvangstTijdVoorDashboard($gmailMessageData, $headers)
     return '';
 }
 
+function backfillOntvangenOpGmailOntbrekend($conn, $accessToken, $limit = 30)
+{
+    // Vul ontbrekende Gmail-ontvangsttijden aan (lijst toont anders created_at/updated_at).
+    try {
+        zorgEmailConceptenAliasKolommen($conn);
+        if (!tabelHeeftKolom($conn, 'email_concepten', 'ontvangen_op_gmail')) {
+            return;
+        }
+    } catch (Throwable) {
+        return;
+    }
+
+    $limit = (int) $limit;
+    if ($limit <= 0) {
+        $limit = 1;
+    }
+    if ($limit > 50) {
+        $limit = 50;
+    }
+
+    $stmt = $conn->prepare("
+        SELECT id, gmail_thread_id
+        FROM email_concepten
+        WHERE status = 'draft'
+          AND (ontvangen_op_gmail IS NULL OR ontvangen_op_gmail = '')
+        ORDER BY updated_at DESC
+        LIMIT :lim
+    ");
+    $stmt->bindValue(':lim', $limit, PDO::PARAM_INT);
+    $stmt->execute();
+    $rows = $stmt->fetchAll();
+    if (!is_array($rows) || empty($rows)) {
+        return;
+    }
+
+    foreach ($rows as $r) {
+        $id = isset($r['id']) ? (int) $r['id'] : 0;
+        $threadId = isset($r['gmail_thread_id']) ? (string) $r['gmail_thread_id'] : '';
+        if ($id <= 0 || $threadId === '') {
+            continue;
+        }
+
+        $t = gmailApiRequest('GET', 'users/me/threads/' . rawurlencode($threadId), $accessToken, null, [
+            'format' => 'metadata',
+            'metadataHeaders' => ['Date', 'Subject'],
+        ]);
+        if (empty($t['ok']) || !isset($t['data']['messages']) || !is_array($t['data']['messages'])) {
+            continue;
+        }
+
+        $messages = $t['data']['messages'];
+        $last = end($messages);
+        if (!is_array($last)) {
+            continue;
+        }
+
+        $headers = [];
+        if (isset($last['payload']['headers']) && is_array($last['payload']['headers'])) {
+            $headers = $last['payload']['headers'];
+        }
+        $ontvangenOpGmail = formatteerGmailOntvangstTijdVoorDashboard($last, $headers);
+        if ($ontvangenOpGmail === '') {
+            continue;
+        }
+
+        try {
+            $upd = $conn->prepare("UPDATE email_concepten SET ontvangen_op_gmail = :d WHERE id = :id LIMIT 1");
+            $upd->execute([
+                ':d' => $ontvangenOpGmail,
+                ':id' => $id,
+            ]);
+        } catch (Throwable) {
+        }
+    }
+}
+
 function bouwOrderContextTekstVoorAi($orderResult)
 {
     // Dit zet ruwe orderdata om naar een kort tekstblok.
@@ -1498,7 +1574,6 @@ function runEmailSyncOnce($conn, $maxResults = 5)
             if (!tabelHeeftKolom($conn, 'email_concepten', 'onderwerp')) {
                 return;
             }
-            $heeftOntvangenGmail = tabelHeeftKolom($conn, 'email_concepten', 'ontvangen_op_gmail');
         } catch (Throwable) {
             return;
         }
@@ -1511,14 +1586,10 @@ function runEmailSyncOnce($conn, $maxResults = 5)
             $limit = 30;
         }
 
-        $where = "status = 'draft' AND (onderwerp IS NULL OR onderwerp = '')";
-        if ($heeftOntvangenGmail) {
-            $where = "status = 'draft' AND ((onderwerp IS NULL OR onderwerp = '') OR (ontvangen_op_gmail IS NULL OR ontvangen_op_gmail = ''))";
-        }
         $stmt = $conn->prepare("
             SELECT id, gmail_thread_id
             FROM email_concepten
-            WHERE $where
+            WHERE status = 'draft' AND (onderwerp IS NULL OR onderwerp = '')
             ORDER BY created_at DESC
             LIMIT :lim
         ");
@@ -1538,6 +1609,7 @@ function runEmailSyncOnce($conn, $maxResults = 5)
 
             $t = gmailApiRequest('GET', 'users/me/threads/' . rawurlencode($threadId), $accessToken, null, [
                 'format' => 'metadata',
+                'metadataHeaders' => ['Date', 'Subject'],
             ]);
             if (empty($t['ok']) || !isset($t['data']['messages']) || !is_array($t['data']['messages'])) {
                 continue;
@@ -1550,10 +1622,8 @@ function runEmailSyncOnce($conn, $maxResults = 5)
             }
 
             $headers = $last['payload']['headers'];
-
             $sub = haalHeaderOp($headers, 'Subject');
             $sub = is_string($sub) ? trim($sub) : '';
-            $ontvangenOpGmail = $heeftOntvangenGmail ? formatteerGmailOntvangstTijdVoorDashboard($last, $headers) : '';
 
             if ($sub !== '') {
                 $upd = $conn->prepare("UPDATE email_concepten SET onderwerp = :o WHERE id = :id AND (onderwerp IS NULL OR onderwerp = '')");
@@ -1562,15 +1632,9 @@ function runEmailSyncOnce($conn, $maxResults = 5)
                     ':id' => $id,
                 ]);
             }
-
-            if ($heeftOntvangenGmail && $ontvangenOpGmail !== '') {
-                $upd2 = $conn->prepare("UPDATE email_concepten SET ontvangen_op_gmail = :d WHERE id = :id AND (ontvangen_op_gmail IS NULL OR ontvangen_op_gmail = '')");
-                $upd2->execute([
-                    ':d' => $ontvangenOpGmail,
-                    ':id' => $id,
-                ]);
-            }
         }
+
+        backfillOntvangenOpGmailOntbrekend($conn, $accessToken, $limit);
     };
     $aliassen = [];
     try {
@@ -1678,19 +1742,23 @@ function runEmailSyncOnce($conn, $maxResults = 5)
             }
 
             if (bestaatEmailConceptVoorThread($conn, $threadId)) {
-                // Er is al een concept voor deze conversatie.
-                // We updaten de datum zodat hij weer bovenaan komt in de lijst.
+                // Er is al een concept voor deze conversatie (nieuwe reply in thread).
+                // Bewaar Gmail-ontvangsttijd van dit bericht, niet alleen created_at in de lijst.
                 try {
-                    $upd = $conn->prepare("
+                    $sql = "
                     UPDATE email_concepten
-                    SET onderwerp = CASE WHEN (onderwerp IS NULL OR onderwerp = '') THEN :o ELSE onderwerp END
-                    WHERE gmail_thread_id = :t
-                    LIMIT 1
-                ");
-                    $upd->execute([
+                    SET onderwerp = CASE WHEN (onderwerp IS NULL OR onderwerp = '') THEN :o ELSE onderwerp END";
+                    $params = [
                         ':o' => (string) $subject,
                         ':t' => (string) $threadId,
-                    ]);
+                    ];
+                    if (tabelHeeftKolom($conn, 'email_concepten', 'ontvangen_op_gmail') && $ontvangenOpGmail !== '') {
+                        $sql .= ", ontvangen_op_gmail = :g";
+                        $params[':g'] = $ontvangenOpGmail;
+                    }
+                    $sql .= " WHERE gmail_thread_id = :t AND status = 'draft' LIMIT 1";
+                    $upd = $conn->prepare($sql);
+                    $upd->execute($params);
                 } catch (Throwable) {
                 }
                 if ($aiLabelId !== '') {
@@ -2605,6 +2673,15 @@ if (!defined('EMAIL_DASHBOARD_LIB_ONLY')) {
     // Als er een zoekterm is, filteren we op: klant e-mail, onderwerp en tekst.
     $conn && zorgEmailConceptenAliasKolommen($conn);
     $heeftOntvangenGmail = tabelHeeftKolom($conn, 'email_concepten', 'ontvangen_op_gmail');
+    if ($heeftOntvangenGmail) {
+        $tokenLijst = haalGmailAccessTokenOp();
+        if (!empty($tokenLijst['ok'])) {
+            try {
+                backfillOntvangenOpGmailOntbrekend($conn, (string) $tokenLijst['access_token'], 30);
+            } catch (Throwable) {
+            }
+        }
+    }
     $params = [];
     $sql = "SELECT id, gmail_thread_id, klant_email, onderwerp, created_at, updated_at" . ($heeftOntvangenGmail ? ", ontvangen_op_gmail" : "") . "
         FROM email_concepten
@@ -2620,7 +2697,11 @@ if (!defined('EMAIL_DASHBOARD_LIB_ONLY')) {
         $params[':q2'] = $q;
         $params[':q3'] = $q;
     }
-    $sql .= " ORDER BY updated_at DESC LIMIT 300";
+    if ($heeftOntvangenGmail) {
+        $sql .= " ORDER BY COALESCE(NULLIF(ontvangen_op_gmail, ''), DATE_FORMAT(updated_at, '%Y-%m-%d %H:%i')) DESC, updated_at DESC LIMIT 300";
+    } else {
+        $sql .= " ORDER BY updated_at DESC LIMIT 300";
+    }
     $rows = [];
     try {
         $stmt = $conn->prepare($sql);
@@ -2851,7 +2932,7 @@ if (!defined('EMAIL_DASHBOARD_LIB_ONLY')) {
                 }
                 if ($ontvangenOpGmail !== '' && tabelHeeftKolom($conn, 'email_concepten', 'ontvangen_op_gmail')) {
                     try {
-                        $upd = $conn->prepare("UPDATE email_concepten SET ontvangen_op_gmail = :d WHERE id = :id AND (ontvangen_op_gmail IS NULL OR ontvangen_op_gmail = '')");
+                        $upd = $conn->prepare("UPDATE email_concepten SET ontvangen_op_gmail = :d WHERE id = :id LIMIT 1");
                         $upd->execute([
                             ':d' => $ontvangenOpGmail,
                             ':id' => (int) $concept['id'],
