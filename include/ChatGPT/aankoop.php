@@ -703,4 +703,11 @@ Elke Switch die bij ons binnen komt testen wij en zetten we terug naar fabrieksi
 Wij mogen helaas niet alles testen. Want de meeste Nintendo producten gaan namelijk nooit stuk. Games, overige controllers worden niet getest. Wel bekijken we alle producten goed om te bepalen of ze er Fantastisch uit zien.
 ';
 
+// Alleen voor de chat-bot (niet als losse FAQ-pagina); feitelijk antwoord bij Switch 2-vragen.
+$FAQ['aankoop'][11]['tonen'] = 0; // niet op website-widget, wel in bot-kennis
+$FAQ['aankoop'][11]['site'] = 'Switch';
+$FAQ['aankoop'][11]['text'] = '<a name="Switch_2_shop"></a><b>Nintendo Switch 2 verkopen jullie al?</b><br>
+De Nintendo Switch 2 bestaat als nieuwe Nintendo-console en is bij Nintendo zelf verkrijgbaar (offici&euml;le release). Bij MarioSwitch.nl hebben we de Nintendo Switch 2 <strong>nog niet</strong> in ons assortiment en kunnen we die dus nog niet bij ons verkopen.<br><br>
+Bij ons koop je w&eacute;l Nintendo Switch-hardware uit het vorige lijnwerk, waaronder OLED, Lite en andere modellen, zolang ze op voorraad staan. Houd gerust een oogje op <a href="https://www.marioswitch.nl/Nintendo-Switch-Spelcomputer.php?chat=1" target="_top">onze Switch-spelcomputer pagina</a> voor nieuwe aanvullingen.';
+
 ?>
