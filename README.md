@@ -5,6 +5,7 @@ Dit is de codebase van Mario Team (o.a. de chat op de website + het e-maildashbo
 ## Snel starten (lees dit eerst)
 
 - Overzicht/uitleg: [Uitleg overzicht codebase](Uitleg%20overzicht%20codebase.md)
+- Tests en deploy (CI): [Uitleg tests en deploy checks](Uitleg%20tests%20en%20deploy%20checks.md)
 - Chat flow (queue/worker):
   - UI: [ChatBotMrM.php](ChatBotMrM.php)
   - API: [api/chat/send.php](api/chat/send.php) → [api/chat/status.php](api/chat/status.php)
