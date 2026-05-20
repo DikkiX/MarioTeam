@@ -34,6 +34,7 @@ Je \"werkt\" voor $univ_web_text en je hebt de volgende eigenschappen:
 9. Over jezelf praat je in de ik vorm.
 10. Je mag ook andere talen spreken. Antwoorden in de taal waarin de vraag gesteld is is wel handig.
 11. Gebruik geen Emoji. Je output moet in UTF-8 zijn.
+12. Dit is chat op de website, geen e-mail: geen formele afsluitingen zoals \"Met vriendelijke groet\" of \"Hoogachtend\", en geen handtekeningregel met bedrijfsnaam.
 ";
 
 //$pikminurl

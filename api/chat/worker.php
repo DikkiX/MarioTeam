@@ -29,22 +29,6 @@ function schrijfWorkerLog($message)
     file_put_contents($logBestand, $regel, FILE_APPEND);
 }
 
-function haalDashboardToneOfVoice($conn)
-{
-    // Tone of voice komt uit de dashboard instellingen.
-    try {
-        $stmt = $conn->prepare("SELECT setting_value FROM dashboard_settings WHERE setting_key = 'tone_of_voice' LIMIT 1");
-        $stmt->execute();
-        $row = $stmt->fetch();
-        if (!$row || !isset($row['setting_value'])) {
-            return '';
-        }
-        return trim((string) $row['setting_value']);
-    } catch (Throwable $e) {
-        return '';
-    }
-}
-
 function haalWorkerSecretUitRequest()
 {
     // De secret kan als header of als POST-field meegegeven worden.
@@ -200,7 +184,6 @@ function bouwToolsVoorOpenAi()
 function roepOpenAiAan($messages, $tools = [], $toolChoice = 'auto')
 {
     // Vraag OpenAI om een antwoord. Soms vraagt OpenAI om extra info via een functie.
-    global $conn;
     $apiKey = getProjectEnvValue('OPENAI_API_KEY');
 
     if ($apiKey === null || $apiKey === '') {
@@ -208,16 +191,8 @@ function roepOpenAiAan($messages, $tools = [], $toolChoice = 'auto')
         return null;
     }
 
-    $tone = '';
-    if (isset($conn) && $conn) {
-        $tone = haalDashboardToneOfVoice($conn);
-    }
-    if (is_string($tone) && $tone !== '') {
-        array_unshift($messages, [
-            'role' => 'system',
-            'content' => "Tone of voice instructies:\n" . $tone,
-        ]);
-    }
+    // Tone of voice uit EmailDashboard (dashboard_settings.tone_of_voice) hoort alleen bij
+    // e-mailconcepten, niet bij deze chat. Chat gebruikt uitsluitend Mr M. (sectie A in system1).
 
     $temperature = 0.2;
     $mode = function_exists('getChatModelMode') ? getChatModelMode() : 2;
@@ -270,8 +245,7 @@ function roepOpenAiAan($messages, $tools = [], $toolChoice = 'auto')
     return $decoded;
 }
 
-// Dit is een "korte" OpenAI-call zonder extra dashboard tone-of-voice.
-// We gebruiken deze alleen voor system0 (onderwerp bepalen), zodat die stap snel en voorspelbaar blijft.
+// Korte OpenAI-call (bijv. system0) zonder aparte system-injecties — snel en voorspelbaar.
 function roepOpenAiAanZonderTone($messages, $tools = [], $toolChoice = 'auto', $maxTokens = 200)
 {
     $apiKey = getProjectEnvValue('OPENAI_API_KEY');
@@ -762,8 +736,8 @@ function maakBerichtenVoorOpenAi($conn, $bericht, $assistant0Vooraf = null)
 {
     global $univ_one, $univ_web, $univ_nin, $univ_web_text, $univ_mar, $univ_zoeken;
 
-    // Korte regels over functies (voorraad zoeken) en Mr M-stijl.
-    $basisPrompt = 'Je bent een klantenservice assistent voor MarioSwitch.nl. Volg altijd de tone of voice uit sectie A (Mr M): enthousiast, uitroepen zoals Haha en Fantastisch, geen emoji. Als sectie B Verkoopadvies in je instructies staat: volg die volgorde (maximaal 5 korte vragen, 1 vraag per antwoord). Geef dan nog geen definitief productadvies tot de klant zegt: "Ik heb antwoord op al mijn vragen." Daarna gebruik je zoek_productaanraders met meerdere zoektermen uit het gesprek (woorden die in producttitels kunnen staan, NL en EN, geen verzonnen merken). Voor andere productvragen: gebruik functies voor live data; geef geen voorraad/prijzen op basis van aannames. Noem nooit exacte voorraadaantallen. Voor orderdata: bestelnummer + e-mail. Bij zoek_productaanraders: alleen titels uit resultaat noemen, in Mr M-stijl met links. Bij zoek_productvoorraad: alleen op voorraad ja/nee op basis van de functie. Als de klant voorraad vraagt van spellen die jij net noemde: gebruik de verplichte voorraadcontrole uit het systeembericht; zeg nooit dat een genoemd product niet in de database staat. Bij weinig resultaten: opnieuw zoeken met andere zoektermen in een volgende functie-call, niet aan de klant vragen om te raden. Noem nooit zelf verzonnen titels of links.';
+    // Korte regels over functies (voorraad zoeken) en Mr M-stijl — geen e-maildashboard-tone.
+    $basisPrompt = 'Je bent een klantenservice assistent voor MarioSwitch.nl. Volg altijd de tone of voice uit sectie A (Mr M): enthousiast, uitroepen zoals Haha en Fantastisch, geen emoji. Gebruik geen formele e-mailstijl: geen afsluitingen zoals "Met vriendelijke groet", "Hoogachtend" of handtekeningen met bedrijfsnaam; dit is een chat als Mr M., kort en menselijk. Als sectie B Verkoopadvies in je instructies staat: volg die volgorde (maximaal 5 korte vragen, 1 vraag per antwoord). Geef dan nog geen definitief productadvies tot de klant zegt: "Ik heb antwoord op al mijn vragen." Daarna gebruik je zoek_productaanraders met meerdere zoektermen uit het gesprek (woorden die in producttitels kunnen staan, NL en EN, geen verzonnen merken). Voor andere productvragen: gebruik functies voor live data; geef geen voorraad/prijzen op basis van aannames. Noem nooit exacte voorraadaantallen. Voor orderdata: bestelnummer + e-mail. Bij zoek_productaanraders: alleen titels uit resultaat noemen, in Mr M-stijl met links. Bij zoek_productvoorraad: alleen op voorraad ja/nee op basis van de functie. Als de klant voorraad vraagt van spellen die jij net noemde: gebruik de verplichte voorraadcontrole uit het systeembericht; zeg nooit dat een genoemd product niet in de database staat. Bij weinig resultaten: opnieuw zoeken met andere zoektermen in een volgende functie-call, niet aan de klant vragen om te raden. Noem nooit zelf verzonnen titels of links.';
 
     // Stap 1: haal context (laatste afgeronde berichten) op uit de queue.
     $contextMessages = haalGespreksContextOp(
@@ -780,7 +754,7 @@ function maakBerichtenVoorOpenAi($conn, $bericht, $assistant0Vooraf = null)
         : haalAssistant0VoorBericht($contextMessages, $userMessage);
     $platform = bepaalPlatformUitAssistant0($assistant0, isset($univ_one) ? (string) $univ_one : '');
 
-    // Stap 3: bouw system1 op met tone-of-voice + verkoopadvies + FAQ/contact.
+    // Stap 3: bouw system1 op met Mr M. / verkoopadvies / FAQ / contact.
     $system1 = bouwSystem1MetIncludes($assistant0, $platform, $userMessage);
     $systemPrompt = $basisPrompt . "\n\n" . $system1;
 
