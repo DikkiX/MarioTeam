@@ -1032,6 +1032,35 @@ function zorgEmailConceptenAliasKolommen($conn)
         if (!tabelHeeftKolom($conn, 'email_concepten', 'afzender_alias_email')) {
             $conn->exec("ALTER TABLE email_concepten ADD COLUMN afzender_alias_email VARCHAR(255) NULL AFTER ontvangen_op_email");
         }
+        zorgEmailConceptenStatusDoorgestuurd($conn);
+    } catch (Throwable) {
+    }
+}
+
+function emailConceptStatusOndersteuntDoorgestuurd($conn)
+{
+    try {
+        $stmt = $conn->prepare("SHOW COLUMNS FROM email_concepten LIKE :c");
+        $stmt->execute([':c' => 'status']);
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+        if (!is_array($row) || !isset($row['Type'])) {
+            return false;
+        }
+
+        return stripos((string) $row['Type'], 'doorgestuurd') !== false;
+    } catch (Throwable) {
+        return false;
+    }
+}
+
+function zorgEmailConceptenStatusDoorgestuurd($conn)
+{
+    // US27: status 'doorgestuurd' moet in de ENUM staan, anders faalt UPDATE na forward.
+    try {
+        if (emailConceptStatusOndersteuntDoorgestuurd($conn)) {
+            return;
+        }
+        $conn->exec("ALTER TABLE email_concepten MODIFY COLUMN status ENUM('draft', 'sent', 'error', 'doorgestuurd') NOT NULL DEFAULT 'draft'");
     } catch (Throwable) {
     }
 }

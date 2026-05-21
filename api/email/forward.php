@@ -188,22 +188,30 @@ if (empty($send['ok'])) {
     exit($err);
 }
 
+zorgEmailConceptenStatusDoorgestuurd($conn);
+
+$statusOk = false;
 try {
     // Na succesvolle forward zetten we de status zodat het team ziet dat dit is opgepakt.
     $upd = $conn->prepare("UPDATE email_concepten SET status = 'doorgestuurd' WHERE id = :id AND status = 'draft'");
     $upd->execute([':id' => $conceptId]);
+    $statusOk = $upd->rowCount() > 0;
 } catch (Throwable) {
-    http_response_code(500);
-    header('Content-Type: text/plain; charset=utf-8');
-    exit('Status bijwerken is mislukt.');
+    $statusOk = false;
 }
 
-// Nette melding in het dashboard na redirect.
-$_SESSION['email_dashboard_flash'] = [
-    'type' => 'ok',
-    'melding' => 'Mail is doorgestuurd en status is op doorgestuurd gezet.',
-];
+// Mail is al verstuurd: altijd terug naar dashboard (nooit kale foutpagina).
+if ($statusOk) {
+    $_SESSION['email_dashboard_flash'] = [
+        'type' => 'ok',
+        'melding' => 'Mail is doorgestuurd en status is op doorgestuurd gezet.',
+    ];
+} else {
+    $_SESSION['email_dashboard_flash'] = [
+        'type' => 'error',
+        'melding' => 'Mail is doorgestuurd, maar de status kon niet worden bijgewerkt. Vernieuw de pagina of neem contact op met beheer.',
+    ];
+}
 
-// Terug naar het dashboard overzicht.
 header('Location: /EmailDashboard.php', true, 303);
 exit;

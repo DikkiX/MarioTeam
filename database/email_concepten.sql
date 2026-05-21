@@ -6,7 +6,7 @@ CREATE TABLE IF NOT EXISTS `email_concepten` (
     `ontvangen_op_email` VARCHAR(255) NULL,
     `afzender_alias_email` VARCHAR(255) NULL,
     `concept_tekst` LONGTEXT NOT NULL,
-    `status` ENUM('draft', 'sent', 'error') NOT NULL DEFAULT 'draft',
+    `status` ENUM('draft', 'sent', 'error', 'doorgestuurd') NOT NULL DEFAULT 'draft',
     `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     `updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     PRIMARY KEY (`id`),
