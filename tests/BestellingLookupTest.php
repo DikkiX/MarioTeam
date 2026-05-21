@@ -463,6 +463,31 @@ final class BestellingLookupTest extends TestCase
         $this->assertStringNotContainsString("From:", $decoded);
     }
 
+    public function testBouwRfc2822BerichtMetBijlages(): void
+    {
+        $rawB64 = bouwRfc2822BerichtMetBijlages(
+            'collega@example.com',
+            'Fwd: Test',
+            "Hierbij doorgestuurd.\n",
+            [
+                [
+                    'filename' => 'foto.jpg',
+                    'mimeType' => 'image/jpeg',
+                    'bytes' => 'JPEGDATA',
+                ],
+            ],
+            null,
+            null,
+            'Service <service@example.com>'
+        );
+        $decoded = base64UrlDecode($rawB64);
+
+        $this->assertStringContainsString('Content-Type: multipart/mixed', $decoded);
+        $this->assertStringContainsString('Content-Disposition: attachment; filename="foto.jpg"', $decoded);
+        $this->assertStringContainsString('Hierbij doorgestuurd.', $decoded);
+        $this->assertStringContainsString(base64_encode('JPEGDATA'), $decoded);
+    }
+
     public function testZoekTekstPlainInPayload(): void
     {
         $raw = "Hello\nWorld";

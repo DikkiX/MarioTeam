@@ -515,6 +515,178 @@ function stripQuotedEnHandtekeningTekst($text)
     return trim((string) $t);
 }
 
+function veiligeMimeBestandsnaam($filename, $fallback = 'bijlage')
+{
+    $safe = preg_replace('/[^a-zA-Z0-9._\- ]+/', '_', (string) $filename);
+    $safe = trim((string) $safe);
+    if ($safe === '') {
+        $safe = (string) $fallback;
+    }
+
+    return $safe;
+}
+
+function haalBijlageBytesUitGmailBericht($accessToken, $messageId, $payload, $bijlage)
+{
+    // Haalt de bytes van 1 bijlage/inline-plaatje op via de Gmail API.
+    if (!function_exists('gmailApiRequest')) {
+        return ['ok' => false, 'error' => 'Gmail API niet beschikbaar.'];
+    }
+    if (!is_array($bijlage) || !is_string($messageId) || trim($messageId) === '') {
+        return ['ok' => false, 'error' => 'Ongeldige input.'];
+    }
+
+    $attachmentId = isset($bijlage['attachmentId']) ? trim((string) $bijlage['attachmentId']) : '';
+    $partPath = isset($bijlage['partPath']) ? trim((string) $bijlage['partPath']) : '';
+    $filename = isset($bijlage['filename']) ? trim((string) $bijlage['filename']) : '';
+    $mimeType = isset($bijlage['mimeType']) ? trim((string) $bijlage['mimeType']) : '';
+
+    $part = null;
+    if ($attachmentId !== '') {
+        $part = vindBijlagePartOpAttachmentId($payload, $attachmentId);
+    } elseif ($partPath !== '') {
+        $part = vindBijlagePartOpPad($payload, $partPath);
+    }
+    if (!is_array($part)) {
+        return ['ok' => false, 'error' => 'Bijlage-part niet gevonden.'];
+    }
+
+    if ($mimeType === '' && isset($part['mimeType'])) {
+        $mimeType = trim((string) $part['mimeType']);
+    }
+    if ($mimeType === '') {
+        $mimeType = 'application/octet-stream';
+    }
+    if ($filename === '' && isset($part['filename'])) {
+        $filename = trim((string) $part['filename']);
+    }
+    if ($filename === '') {
+        $ext = '';
+        if (preg_match('/^image\/(jpeg|jpg|png|gif|webp)$/i', $mimeType, $m) === 1) {
+            $ext = '.' . strtolower((string) $m[1]);
+        }
+        $filename = 'bijlage' . $ext;
+    }
+
+    $bytes = '';
+    if ($attachmentId !== '') {
+        $att = gmailApiRequest('GET', 'users/me/messages/' . rawurlencode($messageId) . '/attachments/' . rawurlencode($attachmentId), $accessToken);
+        if (empty($att['ok']) || !isset($att['data']['data']) || !is_string($att['data']['data'])) {
+            return ['ok' => false, 'error' => 'Bijlage ophalen via API mislukt.'];
+        }
+        $bytes = base64UrlDecode((string) $att['data']['data']);
+    } else {
+        $body = (isset($part['body']) && is_array($part['body'])) ? $part['body'] : [];
+        $data = isset($body['data']) && is_string($body['data']) ? (string) $body['data'] : '';
+        $bytes = $data !== '' ? base64UrlDecode($data) : '';
+    }
+
+    if (!is_string($bytes) || $bytes === '') {
+        return ['ok' => false, 'error' => 'Bijlage is leeg.'];
+    }
+
+    return [
+        'ok' => true,
+        'filename' => veiligeMimeBestandsnaam($filename),
+        'mimeType' => $mimeType,
+        'bytes' => $bytes,
+    ];
+}
+
+function verzamelBijlagenVoorForward($accessToken, $messageId, $payload)
+{
+    // Alle bijlagen en inline-plaatjes uit de klantmail ophalen voor forward.
+    $lijst = haalBijlagesUitPayload($payload);
+    if (!is_array($lijst) || empty($lijst)) {
+        return ['attachments' => [], 'mislukt' => []];
+    }
+
+    $attachments = [];
+    $mislukt = [];
+    $seen = [];
+
+    foreach ($lijst as $b) {
+        if (!is_array($b)) {
+            continue;
+        }
+
+        $mime = isset($b['mimeType']) ? strtolower(trim((string) $b['mimeType'])) : '';
+        $fn = isset($b['filename']) ? trim((string) $b['filename']) : '';
+        $attId = isset($b['attachmentId']) ? trim((string) $b['attachmentId']) : '';
+        if (($mime === 'text/plain' || $mime === 'text/html') && $fn === '' && $attId === '') {
+            continue;
+        }
+
+        $key = $attId !== '' ? ('a:' . $attId) : ('p:' . (string) ($b['partPath'] ?? ''));
+        if ($key === 'p:' || isset($seen[$key])) {
+            continue;
+        }
+        $seen[$key] = true;
+
+        $res = haalBijlageBytesUitGmailBericht($accessToken, $messageId, $payload, $b);
+        if (!empty($res['ok']) && isset($res['bytes'], $res['filename'], $res['mimeType'])) {
+            $attachments[] = [
+                'filename' => (string) $res['filename'],
+                'mimeType' => (string) $res['mimeType'],
+                'bytes' => (string) $res['bytes'],
+            ];
+            continue;
+        }
+
+        $mislukt[] = $fn !== '' ? $fn : 'bijlage';
+    }
+
+    return ['attachments' => $attachments, 'mislukt' => $mislukt];
+}
+
+function bouwRfc2822BerichtMetBijlages($toEmail, $subject, $bodyText, array $attachments, $inReplyTo = null, $references = null, $fromHeader = null)
+{
+    // multipart/mixed: tekst + bijlagen (voor forward met foto's/PDF's).
+    $attachments = array_values(array_filter($attachments, static function ($a) {
+        return is_array($a) && isset($a['bytes']) && is_string($a['bytes']) && $a['bytes'] !== '';
+    }));
+
+    if (empty($attachments)) {
+        return bouwRfc2822Bericht($toEmail, $subject, $bodyText, $inReplyTo, $references, $fromHeader);
+    }
+
+    $boundary = 'mt_' . bin2hex(random_bytes(8));
+    $headers = [];
+    if (is_string($fromHeader) && trim((string) $fromHeader) !== '') {
+        $headers[] = 'From: ' . trim((string) $fromHeader);
+    }
+    $headers[] = 'To: ' . (string) $toEmail;
+    $headers[] = 'Subject: ' . (string) $subject;
+    $headers[] = 'MIME-Version: 1.0';
+    $headers[] = 'Content-Type: multipart/mixed; boundary="' . $boundary . '"';
+    if (is_string($inReplyTo) && $inReplyTo !== '') {
+        $headers[] = 'In-Reply-To: ' . $inReplyTo;
+    }
+    if (is_string($references) && $references !== '') {
+        $headers[] = 'References: ' . $references;
+    }
+
+    $mimeBody = '--' . $boundary . "\r\n";
+    $mimeBody .= "Content-Type: text/plain; charset=\"UTF-8\"\r\n";
+    $mimeBody .= "Content-Transfer-Encoding: 7bit\r\n\r\n";
+    $mimeBody .= (string) $bodyText . "\r\n";
+
+    foreach ($attachments as $att) {
+        $fn = veiligeMimeBestandsnaam($att['filename'] ?? 'bijlage');
+        $mime = isset($att['mimeType']) && trim((string) $att['mimeType']) !== '' ? trim((string) $att['mimeType']) : 'application/octet-stream';
+        $mimeBody .= '--' . $boundary . "\r\n";
+        $mimeBody .= 'Content-Type: ' . $mime . '; name="' . $fn . "\"\r\n";
+        $mimeBody .= 'Content-Disposition: attachment; filename="' . $fn . "\"\r\n";
+        $mimeBody .= "Content-Transfer-Encoding: base64\r\n\r\n";
+        $mimeBody .= chunk_split(base64_encode((string) $att['bytes']), 76, "\r\n");
+    }
+    $mimeBody .= '--' . $boundary . "--\r\n";
+
+    $raw = implode("\r\n", $headers) . "\r\n\r\n" . $mimeBody;
+
+    return rtrim(strtr(base64_encode($raw), '+/', '-_'), '=');
+}
+
 function bouwRfc2822Bericht($toEmail, $subject, $bodyText, $inReplyTo = null, $references = null, $fromHeader = null)
 {
     // Gmail API verwacht het bericht als RFC2822 in base64url (raw).

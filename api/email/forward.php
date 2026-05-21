@@ -168,6 +168,27 @@ if ($origSubject !== '') {
 }
 $body .= "\n" . (string) $origText;
 
+// Bijlagen en inline-plaatjes meesturen (US24/US27).
+$messageId = (is_array($last) && isset($last['id'])) ? trim((string) $last['id']) : '';
+$bijlageData = ['attachments' => [], 'mislukt' => []];
+if ($messageId !== '') {
+    $bijlageData = verzamelBijlagenVoorForward($accessToken, $messageId, $payload);
+}
+if (!empty($bijlageData['mislukt']) && is_array($bijlageData['mislukt'])) {
+    $body .= "\n\n(Let op: deze bijlagen konden niet worden meegestuurd: " . implode(', ', $bijlageData['mislukt']) . ')';
+}
+if (!empty($bijlageData['attachments']) && is_array($bijlageData['attachments'])) {
+    $namen = [];
+    foreach ($bijlageData['attachments'] as $a) {
+        if (is_array($a) && isset($a['filename'])) {
+            $namen[] = (string) $a['filename'];
+        }
+    }
+    if (!empty($namen)) {
+        $body .= "\n\nMeegestuurde bijlagen: " . implode(', ', $namen);
+    }
+}
+
 // Afzender header bepalen (zelfde send-as logica als normale send).
 $ontvangenOp = isset($concept['ontvangen_op_email']) ? (string) $concept['ontvangen_op_email'] : '';
 $conceptAlias = isset($concept['afzender_alias_email']) ? (string) $concept['afzender_alias_email'] : '';
@@ -176,7 +197,10 @@ $fromHeader = bouwFromHeaderVoorAlias($conn, $gekozenAlias);
 
 // Gmail send: we sturen een nieuw bericht naar het interne adres.
 // Daardoor verschijnt dit netjes in "Verzonden items" van de mailbox.
-$raw = bouwRfc2822Bericht($forwardTo, $subject, $body, null, null, $fromHeader);
+$attachments = isset($bijlageData['attachments']) && is_array($bijlageData['attachments']) ? $bijlageData['attachments'] : [];
+$raw = !empty($attachments)
+    ? bouwRfc2822BerichtMetBijlages($forwardTo, $subject, $body, $attachments, null, null, $fromHeader)
+    : bouwRfc2822Bericht($forwardTo, $subject, $body, null, null, $fromHeader);
 $send = gmailApiRequest('POST', 'users/me/messages/send', $accessToken, [
     'raw' => $raw,
 ]);
