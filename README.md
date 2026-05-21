@@ -29,3 +29,4 @@ Deze keys staan in `.env` (niet committen):
 - `CHAT_WORKER_SECRET` (beveiliging voor het worker endpoint)
 - `EMAIL_WORKER_SECRET` (beveiliging voor de e-mail worker in EmailDashboard)
 - `EMAIL_DASHBOARD_USER` en `EMAIL_DASHBOARD_PASS` (inlog voor het dashboard)
+
