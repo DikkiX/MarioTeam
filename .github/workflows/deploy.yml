@@ -102,7 +102,6 @@ jobs:
             --exclude-glob .env \
             --exclude-glob .env.* \
             --exclude-glob .DS_Store \
-            --exclude-glob docs \
             --exclude-glob Oud \
             --exclude-glob node_modules \
             --exclude-glob vendor \
