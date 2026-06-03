@@ -17,7 +17,7 @@ Code-links in dit document zijn relatief (werken in GitHub én als je de repo lo
 - Bestand: [send.php](api/chat/send.php)
   - Ontvangt `{cookie, user_message}`.
   - Schrijft een nieuw record in `chat_queue` met status `pending` ([send.php:L157](api/chat/send.php#L157)).
-  - Start de worker (fire-and-forget) via [triggerWorkerOpAchtergrond](api/chat/send.php#L64).
+  - Start de worker (fire-and-forget) via [triggerWorkerOpAchtergrond](api/chat/send.php#L64), met `message_id` van dit bericht.
 
 - Bestand: [status.php](api/chat/status.php)
   - Geeft status + antwoord terug voor een bericht id + cookie.
@@ -25,7 +25,9 @@ Code-links in dit document zijn relatief (werken in GitHub én als je de repo lo
   - Frontend blijft poll’en tot `completed`.
 
 - Bestand: [worker.php](api/chat/worker.php)
-  - Pakt het oudste `pending` bericht, zet `processing`, maakt antwoord en zet `completed`.
+  - Verwerkt het bericht uit `message_id` (van send) vóór oudste `pending`.
+  - Ruimt verlopen `pending` / `processing` op (TTL uit `.env`, zie hieronder).
+  - Zet `processing`, maakt antwoord en zet `completed` (of `error`).
   - Gebruikt dezelfde “oude volgorde” als de eerdere chatbot:
     1) system0 (onderwerp/platform bepalen)
     2) system1 opbouwen met FAQ/contact/today
@@ -70,6 +72,15 @@ Code-links in dit document zijn relatief (werken in GitHub én als je de repo lo
   - PHP zoekt elk woord in titel, link en omschrijving.
   - Dubbele producten gaan eruit.
   - In het antwoord mag de bot **alleen** die producten noemen (geen verzonnen titels).
+
+### Wachtrij na loadtests (TTL + juiste bericht)
+- Probleem: veel oude `pending` in `chat_queue` → worker leek traag of pakte testberichten eerst.
+- Oplossing in [worker.php](api/chat/worker.php):
+  - `send` stuurt `message_id` mee → worker verwerkt **dat** bericht eerst.
+  - Verlopen rijen: `CHAT_QUEUE_PENDING_TTL_SECONDS` en `CHAT_QUEUE_PROCESSING_TTL_SECONDS` in `.env` (zie [.env.example](.env.example)).
+  - Ouder dan TTL → status `error` (frontend stopt met poll’en op fout).
+- Log: [storage/logs/chat_worker.log](storage/logs/chat_worker.log) (regels over opgeruimde rijen).
+- Na zware test op productie: oude pending handmatig verwijderen of TTL tijdelijk lager zetten.
 
 ### Chatgeschiedenis (HTML + JSON)
 - Bestand: [chat_geschiedenis.php](include/chat_geschiedenis.php)
@@ -208,6 +219,8 @@ Code-links in dit document zijn relatief (werken in GitHub én als je de repo lo
 - `chat_queue`:
   - Queue voor worker chat.
   - Bevat o.a. `cookie`, `user_message`, `ai_response`, `status`.
+  - Worker pakt het bericht uit `message_id` (van send) vóór oudste pending.
+  - Pending/processing ouder dan TTL → `error` (zie `.env`: `CHAT_QUEUE_PENDING_TTL_SECONDS`, `CHAT_QUEUE_PROCESSING_TTL_SECONDS`).
 - `email_concepten`:
   - Concepten voor e-maildashboard.
 - `dashboard_settings`:

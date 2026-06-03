@@ -196,8 +196,9 @@ try {
 
     voegBerichtToeAanChatGeschiedenis($conn, $cookie, 'user', $userMessage);
 
-    // Dit start de worker op de achtergrond.
-    // Als dit mislukt, blijft het endpoint wel gewoon een response geven.
+    // Start de worker op de achtergrond (met message_id = dit bericht).
+    // De worker verwerkt dan dit bericht eerst, niet een oude pending uit de queue.
+    // Als de trigger mislukt, blijft het bericht pending tot een volgende worker-run.
     triggerWorkerOpAchtergrond($berichtId);
 
     // We sturen direct terug dat het opslaan gelukt is.

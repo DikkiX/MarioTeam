@@ -100,6 +100,114 @@ function updateChatQueueBericht($conn, $berichtId, $status, $aiResponse = null)
     ]);
 }
 
+// --- Wachtrij: welk bericht pakken + oude rijen opruimen ---
+// send.php stuurt message_id mee. Die krijgt voorrang (geen oud test-bericht eerst).
+// TTL uit .env: oude pending/processing → status error (na loadtests of vastgelopen worker).
+
+function haalGevraagdeBerichtIdUitRequest(): int
+{
+    // POST komt van send (fire-and-forget). GET kan handmatig bij testen.
+    $raw = $_POST['message_id'] ?? $_GET['message_id'] ?? 0;
+    $id = (int) $raw;
+
+    return $id > 0 ? $id : 0;
+}
+
+function haalChatQueueTtlSeconden(string $envKey, int $default): int
+{
+    // Leest seconden uit .env. Bij lege of ongeldige waarde: default.
+    $waarde = getProjectEnvValue($envKey);
+    if (is_string($waarde) && preg_match('/^\d+$/', $waarde) === 1) {
+        $seconden = (int) $waarde;
+
+        return $seconden > 0 ? $seconden : $default;
+    }
+
+    return $default;
+}
+
+function ruimVerlopenWachtrijBerichtenOp(PDO $conn): void
+{
+    // Zonder opruimen pakt de worker na een loadtest eerst oude pending-rijen.
+    $pendingSec = haalChatQueueTtlSeconden('CHAT_QUEUE_PENDING_TTL_SECONDS', 1800);
+    $processingSec = haalChatQueueTtlSeconden('CHAT_QUEUE_PROCESSING_TTL_SECONDS', 600);
+
+    $stmt = $conn->prepare("
+        UPDATE chat_queue
+        SET status = 'error'
+        WHERE status = 'pending'
+          AND created_at < DATE_SUB(NOW(), INTERVAL :sec SECOND)
+    ");
+    $stmt->execute([':sec' => $pendingSec]);
+    $verlopenPending = $stmt->rowCount();
+
+    $stmt = $conn->prepare("
+        UPDATE chat_queue
+        SET status = 'error'
+        WHERE status = 'processing'
+          AND created_at < DATE_SUB(NOW(), INTERVAL :sec SECOND)
+    ");
+    $stmt->execute([':sec' => $processingSec]);
+    $verlopenProcessing = $stmt->rowCount();
+
+    if ($verlopenPending > 0 || $verlopenProcessing > 0) {
+        schrijfWorkerLog(
+            'Verlopen wachtrij opgeruimd: '
+            . $verlopenPending
+            . ' pending, '
+            . $verlopenProcessing
+            . ' processing (ouder dan '
+            . $pendingSec
+            . '/'
+            . $processingSec
+            . ' sec).'
+        );
+    }
+}
+
+function pakPendingBerichtVoorWorker(PDO $conn, int $gevraagdBerichtId): ?array
+{
+    // 1) Probeer het bericht dat send net heeft aangemaakt.
+    // 2) Anders het oudste pending (handmatige worker-call zonder message_id).
+    $basisSelect = "
+        SELECT id, cookie, user_message, status, created_at
+        FROM chat_queue
+        WHERE status = :status
+    ";
+
+    if ($gevraagdBerichtId > 0) {
+        $selectSql = $basisSelect . "
+            AND id = :id
+            LIMIT 1
+            FOR UPDATE
+        ";
+        $selectStmt = $conn->prepare($selectSql);
+        $selectStmt->execute([
+            ':status' => 'pending',
+            ':id' => $gevraagdBerichtId,
+        ]);
+        $bericht = $selectStmt->fetch();
+        if (is_array($bericht)) {
+            return $bericht;
+        }
+
+        schrijfWorkerLog('Gevraagd bericht ' . $gevraagdBerichtId . ' is niet pending; pak oudste resterende pending.');
+    }
+
+    $selectSql = $basisSelect . "
+        ORDER BY created_at ASC, id ASC
+        LIMIT 1
+        FOR UPDATE
+    ";
+    $selectStmt = $conn->prepare($selectSql);
+    $selectStmt->execute([
+        ':status' => 'pending',
+    ]);
+    $bericht = $selectStmt->fetch();
+
+    return is_array($bericht) ? $bericht : null;
+}
+
 // Dit zijn de interne functies die OpenAI mag gebruiken.
 // Zo kan het model live data opvragen in plaats van gokken.
 function bouwToolsVoorOpenAi()
@@ -805,24 +913,15 @@ if ($requiredSecret !== '') {
 }
 
 $actiefBerichtId = 0;
+$gevraagdBerichtId = haalGevraagdeBerichtIdUitRequest();
 
 try {
+    ruimVerlopenWachtrijBerichtenOp($conn);
+
     $conn->beginTransaction();
 
-    // We pakken altijd het oudste bericht dat nog op pending staat.
-    $selectSql = "
-        SELECT id, cookie, user_message, status, created_at
-        FROM chat_queue
-        WHERE status = :status
-        ORDER BY created_at ASC, id ASC
-        LIMIT 1
-        FOR UPDATE
-    ";
-    $selectStmt = $conn->prepare($selectSql);
-    $selectStmt->execute([
-        ':status' => 'pending',
-    ]);
-    $bericht = $selectStmt->fetch();
+    // Eerst het bericht dat send net heeft aangemaakt (message_id), anders oudste pending.
+    $bericht = pakPendingBerichtVoorWorker($conn, $gevraagdBerichtId);
 
     // Als er niets meer in de wachtrij staat, stoppen we meteen netjes.
     if (!$bericht) {
