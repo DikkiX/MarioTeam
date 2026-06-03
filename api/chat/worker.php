@@ -102,7 +102,7 @@ function updateChatQueueBericht($conn, $berichtId, $status, $aiResponse = null)
 
 // --- Wachtrij: welk bericht pakken + oude rijen opruimen ---
 // send.php stuurt message_id mee. Die krijgt voorrang (geen oud test-bericht eerst).
-// TTL uit .env: oude pending/processing → status error (na loadtests of vastgelopen worker).
+// .env CHAT_WACHT_MAX_SECONDEN / CHAT_VERWERK_MAX_SECONDEN: oude rijen → status error.
 
 function haalGevraagdeBerichtIdUitRequest(): int
 {
@@ -113,9 +113,9 @@ function haalGevraagdeBerichtIdUitRequest(): int
     return $id > 0 ? $id : 0;
 }
 
-function haalChatQueueTtlSeconden(string $envKey, int $default): int
+function haalWachtrijMaxSecondenUitEnv(string $envKey, int $default): int
 {
-    // Leest seconden uit .env. Bij lege of ongeldige waarde: default.
+    // Leest seconden uit .env (bijv. CHAT_WACHT_MAX_SECONDEN). Leeg of ongeldig → default.
     $waarde = getProjectEnvValue($envKey);
     if (is_string($waarde) && preg_match('/^\d+$/', $waarde) === 1) {
         $seconden = (int) $waarde;
@@ -129,8 +129,8 @@ function haalChatQueueTtlSeconden(string $envKey, int $default): int
 function ruimVerlopenWachtrijBerichtenOp(PDO $conn): void
 {
     // Zonder opruimen pakt de worker na een loadtest eerst oude pending-rijen.
-    $pendingSec = haalChatQueueTtlSeconden('CHAT_QUEUE_PENDING_TTL_SECONDS', 1800);
-    $processingSec = haalChatQueueTtlSeconden('CHAT_QUEUE_PROCESSING_TTL_SECONDS', 600);
+    $pendingSec = haalWachtrijMaxSecondenUitEnv('CHAT_WACHT_MAX_SECONDEN', 1800);
+    $processingSec = haalWachtrijMaxSecondenUitEnv('CHAT_VERWERK_MAX_SECONDEN', 600);
 
     $stmt = $conn->prepare("
         UPDATE chat_queue

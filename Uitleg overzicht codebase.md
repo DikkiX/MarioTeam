@@ -77,7 +77,7 @@ Code-links in dit document zijn relatief (werken in GitHub én als je de repo lo
 - Probleem: veel oude `pending` in `chat_queue` → worker leek traag of pakte testberichten eerst.
 - Oplossing in [worker.php](api/chat/worker.php):
   - `send` stuurt `message_id` mee → worker verwerkt **dat** bericht eerst.
-  - Verlopen rijen: `CHAT_QUEUE_PENDING_TTL_SECONDS` en `CHAT_QUEUE_PROCESSING_TTL_SECONDS` in `.env` (zie [.env.example](.env.example)).
+  - Verlopen rijen: `CHAT_WACHT_MAX_SECONDEN` en `CHAT_VERWERK_MAX_SECONDEN` in `.env` (zie [.env.example](.env.example)).
   - Ouder dan TTL → status `error` (frontend stopt met poll’en op fout).
 - Log: [storage/logs/chat_worker.log](storage/logs/chat_worker.log) (regels over opgeruimde rijen).
 - Na zware test op productie: oude pending handmatig verwijderen of TTL tijdelijk lager zetten.
@@ -220,7 +220,7 @@ Code-links in dit document zijn relatief (werken in GitHub én als je de repo lo
   - Queue voor worker chat.
   - Bevat o.a. `cookie`, `user_message`, `ai_response`, `status`.
   - Worker pakt het bericht uit `message_id` (van send) vóór oudste pending.
-  - Pending/processing ouder dan TTL → `error` (zie `.env`: `CHAT_QUEUE_PENDING_TTL_SECONDS`, `CHAT_QUEUE_PROCESSING_TTL_SECONDS`).
+  - Pending/processing ouder dan max leeftijd → `error` (zie `.env`: `CHAT_WACHT_MAX_SECONDEN`, `CHAT_VERWERK_MAX_SECONDEN`).
 - `email_concepten`:
   - Concepten voor e-maildashboard.
 - `dashboard_settings`:

@@ -117,7 +117,7 @@ Op dit moment tellen deze bestanden mee:
 Na loadtests kunnen oude `pending` rijen de queue blokkeren. In [worker.php](api/chat/worker.php):
 
 - `message_id` van send heeft voorrang.
-- TTL uit `.env` zet oude `pending` / `processing` op `error`.
+- Max leeftijd uit `.env` (`CHAT_WACHT_MAX_SECONDEN`, `CHAT_VERWERK_MAX_SECONDEN`) zet oude rijen op `error`.
 
 Zie [Uitleg overzicht codebase](Uitleg%20overzicht%20codebase.md) (sectie wachtrij) en [.env.example](.env.example).
 

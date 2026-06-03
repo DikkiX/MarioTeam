@@ -27,8 +27,8 @@ Deze keys staan in `.env` (niet committen):
 - `OPENAI_API_KEY`
 - `CHAT_MODEL_MODE` (model-keuze)
 - `CHAT_WORKER_SECRET` (beveiliging voor het worker endpoint)
-- `CHAT_QUEUE_PENDING_TTL_SECONDS` (default 1800: oude pending → error)
-- `CHAT_QUEUE_PROCESSING_TTL_SECONDS` (default 600: vastgelopen processing → error)
+- `CHAT_WACHT_MAX_SECONDEN` (default 1800: oude pending → error)
+- `CHAT_VERWERK_MAX_SECONDEN` (default 600: vastgelopen processing → error)
 - `EMAIL_WORKER_SECRET` (beveiliging voor de e-mail worker in EmailDashboard)
 - `EMAIL_DASHBOARD_USER` en `EMAIL_DASHBOARD_PASS` (inlog voor het dashboard)
 
