@@ -261,17 +261,24 @@ CHATGPT($input, $system, $temp, $model, $history, $test, $gebruikTools = false, 
 
 **ChatGptMrM.php** (sync): `CHATGPT_GEBRUIK_TOOLS=1` in `.env`.
 
-### Stap 5 — Admin (later)
+### Stap 5 — Admin / tools-expanding (deels) ✅
+
+**`tools-expanding/`** — hub met kaarten:
+
+| Kaart | Type | Wat |
+|-------|------|-----|
+| CHATGPT + tools | Met GPT | sync test |
+| Bestelling opzoeken | Zonder GPT | `voerChatToolUit(zoek_bestelling)` |
+
+Nieuwe tool: pagina in map + regel in `toolsExpandingCatalogus()` in `_bootstrap.php`.
 
 ```php
-include_once __DIR__ . '/include/chat_tools.php';
+// Voorbeeld direct (zonder GPT):
 $result = voerChatToolUit($conn, 'zoek_bestelling', [
     'bestelling_id' => 12345,
     'email' => 'klant@voorbeeld.nl',
 ]);
 ```
-
-Geen AI nodig.
 
 ---
 
@@ -343,13 +350,15 @@ Optioneel: grote logica in apart bestand (bijv. `tracking_lookup.php`).
 
 ### C. Sync `CHATGPT()` (stap 4)
 
-**Optie 1 — testpagina (aanbevolen):** `test_chatgpt_tools.php`
+**Optie 1 — tools-expanding (aanbevolen):** `/tools-expanding/`
 
-1. Open in browser (testserver): `/test_chatgpt_tools.php`
-2. Vul `CHAT_WORKER_SECRET` uit `.env` in als test-geheim
-3. Kies een voorbeeldbericht of typ zelf (bestelling, Just Dance, Xenoblade, …)
-4. Antwoord + `tool_choice` verschijnen op de pagina
-5. Log: `CHATGPT functie aangeroepen: …` in `storage/logs/chat_worker.log`
+1. Open hub: `/tools-expanding/index.php` — wachtwoord **Obed** (eenmalig per sessie)
+2. Kies kaart:
+   - **Met GPT** → `gpt-sync-tools.php` (CHATGPT + tools)
+   - **Zonder GPT** → `bestelling-zonder-ai.php` (direct `voerChatToolUit`)
+3. Terug naar overzicht via link bovenaan
+
+Oude URL `/test_chatgpt_tools.php` redirect naar de hub.
 
 **Optie 2 — ChatGptMrM.php**
 
