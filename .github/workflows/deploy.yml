@@ -8,6 +8,8 @@ on:
   push:
     branches:
       - main
+      # Tijdelijk: testserver volgt feature-branch (verwijderen na merge naar main)
+      - feature/centrale-chat-tools
   workflow_dispatch:
 
 concurrency:

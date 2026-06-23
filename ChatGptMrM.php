@@ -295,11 +295,17 @@ Het is nu ' . $dag[$dateN] . ' ' . date("j") . ' ' . $maand[$maandN] . ' ' . dat
   $sql = "UPDATE chatHistory SET conversationJSON = ?, conversationHTML = ? WHERE cookie = ?";
   $stmtUpdateBoth = $conn->prepare($sql);
   if (($user != '') && ($user != 'wacht op 2de bericht')) {
-    //function CHATGPT($input, $systemContent, $temperature = 0.6, $model = "gpt-4o")
-    if (isset($conversationHistoryArray))
-      $assistant = CHATGPT($user, $system1, $temp, 3, $conversationHistoryArray, 1);
-    else
-      $assistant = CHATGPT($user, $system1, $temp, 3);
+    $gebruikTools = chatGptToolsActief();
+    $toolChoice = 'auto';
+    if ($gebruikTools) {
+      $toolChoice = chatGptBepaalToolKeuze($user, is_string($assistant0) ? $assistant0 : '');
+    }
+
+    if (isset($conversationHistoryArray)) {
+      $assistant = CHATGPT($user, $system1, $temp, 3, $conversationHistoryArray, 1, $gebruikTools, $conn, $toolChoice);
+    } else {
+      $assistant = CHATGPT($user, $system1, $temp, 3, [], 1, $gebruikTools, $conn, $toolChoice);
+    }
 
     $assistant = perfectLink($assistant);
 
@@ -318,13 +324,23 @@ Het is nu ' . $dag[$dateN] . ' ' . date("j") . ' ' . $maand[$maandN] . ' ' . dat
     //verkoopadvies stap 2
     include_once $_SERVER['DOCUMENT_ROOT'] . "/include/ChatGPT/ProductList.php";
     $system2 = $systemMrM . $systemList;
+    $gebruikTools = chatGptToolsActief();
+    $toolChoiceAanraders = $gebruikTools
+      ? [
+        'type' => 'function',
+        'function' => ['name' => 'zoek_productaanraders'],
+      ]
+      : 'auto';
     $assistant = CHATGPT(
       'Welke games raad je me aan om te kopen op basis van de antwoorden die ik heb gegeven? Games die ik leuk vind heb ik al gekocht.',
       $system2,
       $temp,
       3,
       $conversationHistoryArray,
-      1
+      1,
+      $gebruikTools,
+      $conn,
+      $toolChoiceAanraders
     );
 
     $assistant = perfectLink($assistant);

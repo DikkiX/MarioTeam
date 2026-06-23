@@ -1,9 +1,7 @@
 <?php
 include_once $_SERVER['DOCUMENT_ROOT'] . '/include/db.inc';
-// Gedeelde order-lookup (wordt ook door EmailDashboard gebruikt).
-include_once $_SERVER['DOCUMENT_ROOT'] . '/include/bestelling_lookup.php';
+include_once $_SERVER['DOCUMENT_ROOT'] . '/include/chat_tools.php';
 include_once $_SERVER['DOCUMENT_ROOT'] . '/include/chat_functie_keuze.php';
-include_once $_SERVER['DOCUMENT_ROOT'] . '/include/chat_product_zoek.php';
 include_once $_SERVER['DOCUMENT_ROOT'] . '/include/chat_geschiedenis.php';
 ignore_user_abort(true);
 set_time_limit(0);
@@ -208,85 +206,6 @@ function pakPendingBerichtVoorWorker(PDO $conn, int $gevraagdBerichtId): ?array
     return is_array($bericht) ? $bericht : null;
 }
 
-// Dit zijn de interne functies die OpenAI mag gebruiken.
-// Zo kan het model live data opvragen in plaats van gokken.
-function bouwToolsVoorOpenAi()
-{
-    // Dit zijn functies die de AI mag gebruiken om live dingen op te zoeken.
-    return [
-        [
-            'type' => 'function',
-            'function' => [
-                'name' => 'zoek_bestelling',
-                'description' => 'Zoek live besteldata op in de tabel Bestellingen en haal (waar mogelijk) ook de artikelen uit de bestelling op. Gebruik dit alleen als de klant zowel een bestelnummer als hetzelfde e-mailadres geeft dat bij de bestelling hoort.',
-                'parameters' => [
-                    'type' => 'object',
-                    'properties' => [
-                        'bestelling_id' => [
-                            'type' => 'integer',
-                            'description' => 'Het bestelnummer van de klant.',
-                        ],
-                        'email' => [
-                            'type' => 'string',
-                            'description' => 'Het e-mailadres dat bij de bestelling hoort.',
-                        ],
-                    ],
-                    'required' => ['bestelling_id', 'email'],
-                    'additionalProperties' => false,
-                ],
-            ],
-        ],
-        [
-            'type' => 'function',
-            'function' => [
-                'name' => 'zoek_productvoorraad',
-                'description' => 'Zoek live product- en voorraadinfo op in de tabellen Winkel en info.',
-                'parameters' => [
-                    'type' => 'object',
-                    'properties' => [
-                        'zoekterm' => [
-                            'type' => 'string',
-                            'description' => 'Titel of deel van de titel van het product.',
-                        ],
-                    ],
-                    'required' => ['zoekterm'],
-                    'additionalProperties' => false,
-                ],
-            ],
-        ],
-        [
-            'type' => 'function',
-            'function' => [
-                // Aanraders: alleen producten die echt in Winkel staan (aantal > 0).
-                'name' => 'zoek_productaanraders',
-                'description' => 'Zoek live producten op voorraad. Geef 3-6 zoektermen die in titels/omschrijvingen kunnen staan (bij danspellen: dans, dance, danser, party — niet alleen bekende merken). Alleen producten uit resultaat noemen.',
-                'parameters' => [
-                    'type' => 'object',
-                    'properties' => [
-                        'zoektermen' => [
-                            'type' => 'array',
-                            'items' => [
-                                'type' => 'string',
-                            ],
-                            'description' => 'Lijst met zoekwoorden, bijv. ["dans","dance","just dance"] of ["rpg","jrpg"]. Gebruik 2 tot 5 termen bij genre-vragen.',
-                        ],
-                        'zoekterm' => [
-                            'type' => 'string',
-                            'description' => 'Optioneel: één zoekwoord (oud veld). Liever zoektermen gebruiken.',
-                        ],
-                        'max_results' => [
-                            'type' => 'integer',
-                            'description' => 'Aantal resultaten (1 t/m 10).',
-                        ],
-                    ],
-                    'required' => [],
-                    'additionalProperties' => false,
-                ],
-            ],
-        ],
-    ];
-}
-
 // Deze functie stuurt berichten naar OpenAI.
 // Als we tools meegeven, mag het model ook een functie aanroepen.
 function roepOpenAiAan($messages, $tools = [], $toolChoice = 'auto')
@@ -413,233 +332,6 @@ function roepOpenAiAanZonderTone($messages, $tools = [], $toolChoice = 'auto', $
     return $decoded;
 }
 
-// Hier voeren we de echte databasefunctie uit die OpenAI vraagt.
-// We geven daarna alleen ruwe data terug, nog geen mooi klantantwoord.
-function voerInterneFunctieUit($conn, $functieNaam, $arguments)
-{
-    if ($functieNaam === 'zoek_bestelling') {
-        // De echte order lookup staat gedeeld in include/bestelling_lookup.php.
-        // Zo is de logica identiek voor chat én e-mailconcepten en onderhoud je het maar op 1 plek.
-        $bestellingId = isset($arguments['bestelling_id']) ? (int) $arguments['bestelling_id'] : 0;
-        $email = isset($arguments['email']) ? trim((string) $arguments['email']) : '';
-
-        $result = zoekBestellingRuw($conn, $bestellingId, $email);
-
-        $resultaat = isset($result['resultaat']) && is_array($result['resultaat']) ? $result['resultaat'] : [];
-        $itemsLen = isset($resultaat['items']) ? strlen((string) $resultaat['items']) : 0;
-        $artikelenCount = count((array) ($result['artikelen'] ?? []));
-        if ($bestellingId > 0) {
-            schrijfWorkerLog('Bestelling ' . $bestellingId . ' items_len=' . $itemsLen . ' artikelen_count=' . $artikelenCount);
-        }
-
-        return $result;
-    }
-
-    if ($functieNaam === 'zoek_productvoorraad') {
-        global $univ_web;
-        // Hiermee kan de AI live voorraad en productinfo opvragen.
-        $zoekterm = isset($arguments['zoekterm']) ? trim((string) $arguments['zoekterm']) : '';
-
-        if ($zoekterm === '') {
-            return [
-                'functie' => 'zoek_productvoorraad',
-                'gevonden' => false,
-                'message' => 'Er is geen zoekterm meegegeven.',
-            ];
-        }
-
-        $resultaat = [];
-        try {
-            // Meerdere schrijfwijzen (bijv. dubbele punt in titel) zodat de database wél matcht.
-            $perLink = [];
-            $stmt = $conn->prepare("
-                SELECT 
-                    w.nr,
-                    w.titel,
-                    w.link,
-                    w.prijs,
-                    w.sentence,
-                    CASE WHEN w.aantal > 0 THEN 'ja' ELSE 'nee' END AS op_voorraad,
-                    i.leeftijd,
-                    i.spelers,
-                    i.GemCijfer,
-                    i.TotBeoord
-                FROM Winkel w
-                LEFT JOIN info i ON i.link = w.link
-                WHERE w.titel LIKE :zoekterm_titel OR w.link LIKE :zoekterm_link
-                ORDER BY w.aantal DESC, w.prijs ASC
-                LIMIT 5
-            ");
-            foreach (maakProductZoektermVarianten($zoekterm) as $term) {
-                $zoektermLike = '%' . $term . '%';
-                $stmt->execute([
-                    ':zoekterm_titel' => $zoektermLike,
-                    ':zoekterm_link' => $zoektermLike,
-                ]);
-                $batch = $stmt->fetchAll();
-                if (!is_array($batch)) {
-                    continue;
-                }
-                foreach ($batch as $row) {
-                    $link = isset($row['link']) ? trim((string) $row['link']) : '';
-                    $sleutel = $link !== '' ? $link : (string) ($row['nr'] ?? '');
-                    if ($sleutel === '' || isset($perLink[$sleutel])) {
-                        continue;
-                    }
-                    $perLink[$sleutel] = $row;
-                    if (count($perLink) >= 5) {
-                        break 2;
-                    }
-                }
-            }
-            $resultaat = array_values($perLink);
-        } catch (Throwable $e) {
-            schrijfWorkerLog('zoek_productvoorraad fout: ' . $e->getMessage());
-            return [
-                'functie' => 'zoek_productvoorraad',
-                'gevonden' => false,
-                'status' => 'fout',
-                'message' => 'Voorraad opzoeken is nu niet beschikbaar.',
-                'resultaat' => [],
-            ];
-        }
-
-        $basisUrl = '';
-        if (isset($univ_web) && is_string($univ_web) && $univ_web !== '') {
-            $basisUrl = 'https://www.' . $univ_web;
-        }
-
-        if (!empty($resultaat) && $basisUrl !== '') {
-            foreach ($resultaat as $idx => $row) {
-                $link = isset($row['link']) ? trim((string) $row['link']) : '';
-                if ($link === '') {
-                    continue;
-                }
-
-                if (preg_match('/^https?:\/\//i', $link) === 1) {
-                    $resultaat[$idx]['product_url'] = $link;
-                    continue;
-                }
-
-                if (preg_match('/^www\./i', $link) === 1) {
-                    $resultaat[$idx]['product_url'] = 'https://' . $link;
-                    continue;
-                }
-
-                $resultaat[$idx]['product_url'] = $basisUrl . '/' . ltrim($link, '/');
-            }
-        }
-
-        if (empty($resultaat)) {
-            return [
-                'functie' => 'zoek_productvoorraad',
-                'gevonden' => false,
-                'status' => 'niet_in_database',
-                'message' => 'Geen product gevonden voor deze zoekterm.',
-                'resultaat' => [],
-            ];
-        }
-
-        $heeftOpVoorraad = false;
-        foreach ($resultaat as $row) {
-            $op = isset($row['op_voorraad']) ? strtolower(trim((string) $row['op_voorraad'])) : '';
-            if ($op === 'ja') {
-                $heeftOpVoorraad = true;
-                break;
-            }
-        }
-
-        return [
-            'functie' => 'zoek_productvoorraad',
-            'gevonden' => true,
-            'status' => $heeftOpVoorraad ? 'op_voorraad' : 'niet_op_voorraad',
-            'resultaat' => $resultaat,
-        ];
-    }
-
-    if ($functieNaam === 'zoek_productaanraders') {
-        // Zoeken zelf gebeurt in include/chat_product_zoek.php.
-        global $univ_web;
-        $max = isset($arguments['max_results']) ? (int) $arguments['max_results'] : 5;
-        if ($max < 1) {
-            $max = 1;
-        }
-        if ($max > 10) {
-            $max = 10;
-        }
-
-        $basisUrl = '';
-        if (isset($univ_web) && is_string($univ_web) && $univ_web !== '') {
-            $basisUrl = 'https://www.' . $univ_web;
-        }
-
-        $zoektermen = haalZoektermenUitToolArgs($arguments);
-        $rows = [];
-        $gebruikteZoektermen = [];
-
-        try {
-            if (!empty($zoektermen)) {
-                $zoekResultaat = zoekAanradersInDatabase($conn, $zoektermen, $max, $max);
-                $rows = $zoekResultaat['rijen'] ?? [];
-                $gebruikteZoektermen = $zoekResultaat['gebruikte_zoektermen'] ?? [];
-            } else {
-                $rows = haalAlgemeneAanradersUitDatabase($conn, $max);
-            }
-        } catch (Throwable $e) {
-            schrijfWorkerLog('zoek_productaanraders fout: ' . $e->getMessage());
-            return [
-                'functie' => 'zoek_productaanraders',
-                'gevonden' => false,
-                'status' => 'fout',
-                'message' => 'Aanraders opzoeken is nu niet beschikbaar.',
-                'resultaat' => [],
-            ];
-        }
-
-        $rows = voegProductUrlsToeAanRijen($rows, $basisUrl);
-
-        if (empty($rows)) {
-            return [
-                'functie' => 'zoek_productaanraders',
-                'gevonden' => false,
-                'status' => 'geen_resultaten',
-                'message' => 'Geen aanraders op voorraad voor deze zoektermen. Noem geen producten die niet in resultaat staan.',
-                'gebruikte_zoektermen' => $gebruikteZoektermen,
-                'resultaat' => [],
-            ];
-        }
-
-        return [
-            'functie' => 'zoek_productaanraders',
-            'gevonden' => true,
-            'status' => 'gevonden',
-            'gebruikte_zoektermen' => $gebruikteZoektermen,
-            'resultaat' => $rows,
-        ];
-    }
-
-    if ($functieNaam === 'controleer_voorraad_lijst') {
-        global $univ_web;
-        $basisUrl = '';
-        if (isset($univ_web) && is_string($univ_web) && $univ_web !== '') {
-            $basisUrl = 'https://www.' . $univ_web;
-        }
-        $context = isset($arguments['_gesprek_context']) && is_array($arguments['_gesprek_context'])
-            ? $arguments['_gesprek_context']
-            : [];
-
-        return controleerVoorraadUitGesprek($conn, $context, $basisUrl);
-    }
-
-    return [
-        'functie' => $functieNaam,
-        'gevonden' => false,
-        'message' => 'Onbekende functie aangevraagd.',
-    ];
-}
-
-// Hiermee halen we eerdere berichten van dezelfde bezoeker op.
-// Zo kan de chatbot vervolgvragen beter begrijpen.
 function haalGespreksContextOp($conn, $cookie, $actiefBerichtId, $maxBerichten = 6)
 {
     if ($cookie === '') {
@@ -968,7 +660,7 @@ try {
     $assistant0 = haalAssistant0VoorBericht($contextMessages, $userMessage);
 
     $messages = maakBerichtenVoorOpenAi($conn, $bericht, $assistant0);
-    $tools = bouwToolsVoorOpenAi();
+    $tools = bouwChatTools();
     $toolChoice = bepaalGeforceerdeFunctieKeuze($userMessage, $assistant0);
 
     // Vervolgvraag “zijn ze op voorraad?”: check de shop-links uit het vorige bot-antwoord.
@@ -1047,7 +739,7 @@ try {
             }
 
             schrijfWorkerLog('Functie aangeroepen: ' . $functieNaam);
-            $functieResultaat = voerInterneFunctieUit($conn, $functieNaam, $arguments);
+            $functieResultaat = voerChatToolUit($conn, $functieNaam, $arguments);
             $resultJson = json_encode($functieResultaat, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
             $len = is_string($resultJson) ? strlen($resultJson) : 0;
             schrijfWorkerLog('Functie-resultaat ontvangen (' . $len . ' bytes).');
