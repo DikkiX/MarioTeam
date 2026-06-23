@@ -22,22 +22,23 @@ function toolsExpandingProjectRoot(): string
 
 function toolsExpandingRequireDatabase(): PDO
 {
-    static $conn = null;
+    static $cached = null;
 
-    if ($conn instanceof PDO) {
-        return $conn;
+    if ($cached instanceof PDO) {
+        return $cached;
     }
 
+    // db.inc zet $conn in de scope van deze functie (niet in $GLOBALS).
     include_once toolsExpandingProjectRoot() . '/include/db.inc';
 
-    if (!isset($GLOBALS['conn']) || !($GLOBALS['conn'] instanceof PDO)) {
+    if (!isset($conn) || !($conn instanceof PDO)) {
         http_response_code(500);
         exit('Databaseverbinding ontbreekt.');
     }
 
-    $conn = $GLOBALS['conn'];
+    $cached = $conn;
 
-    return $conn;
+    return $cached;
 }
 
 /** Wachtwoord voor toegang tot tools-expanding (alleen test/staging). */
