@@ -22,7 +22,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['wachtwoord'])) {
 
 toolsExpandingRenderHead([
     'titel' => 'Tools-expanding',
-    'subtitel' => 'Kleine bibliotheek om chat-tools te testen — met of zonder GPT.',
+    'subtitel' => 'Per tool: test zonder GPT (direct) of met GPT (CHATGPT + tools).',
 ]);
 
 if (!toolsExpandingIsIngelogd()) {
@@ -45,8 +45,8 @@ if (!toolsExpandingIsIngelogd()) {
 
 ?>
 <p class="hint">
-    <strong>Met GPT</strong> = OpenAI + tools &nbsp;|&nbsp;
-    <strong>Zonder GPT</strong> = direct <code>voerChatToolUit()</code> (admin-stijl)
+    <strong>Zonder GPT</strong> = direct <code>voerChatToolUit()</code> (ruwe JSON). &nbsp;|&nbsp;
+    <strong>Met GPT</strong> = <code>CHATGPT()</code> + tool → antwoord in klanttaal.
 </p>
 <p><a href="index.php?uitloggen=1">Uitloggen</a></p>
 

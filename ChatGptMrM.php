@@ -295,16 +295,12 @@ Het is nu ' . $dag[$dateN] . ' ' . date("j") . ' ' . $maand[$maandN] . ' ' . dat
   $sql = "UPDATE chatHistory SET conversationJSON = ?, conversationHTML = ? WHERE cookie = ?";
   $stmtUpdateBoth = $conn->prepare($sql);
   if (($user != '') && ($user != 'wacht op 2de bericht')) {
-    $gebruikTools = chatGptToolsActief();
-    $toolChoice = 'auto';
-    if ($gebruikTools) {
-      $toolChoice = chatGptBepaalToolKeuze($user, is_string($assistant0) ? $assistant0 : '');
-    }
+    $toolChoice = chatGptBepaalToolKeuze($user, is_string($assistant0) ? $assistant0 : '');
 
     if (isset($conversationHistoryArray)) {
-      $assistant = CHATGPT($user, $system1, $temp, 3, $conversationHistoryArray, 1, $gebruikTools, $conn, $toolChoice);
+      $assistant = CHATGPT($user, $system1, $temp, 3, $conversationHistoryArray, 1, $conn, $toolChoice);
     } else {
-      $assistant = CHATGPT($user, $system1, $temp, 3, [], 1, $gebruikTools, $conn, $toolChoice);
+      $assistant = CHATGPT($user, $system1, $temp, 3, [], 1, $conn, $toolChoice);
     }
 
     $assistant = perfectLink($assistant);
@@ -324,13 +320,10 @@ Het is nu ' . $dag[$dateN] . ' ' . date("j") . ' ' . $maand[$maandN] . ' ' . dat
     //verkoopadvies stap 2
     include_once $_SERVER['DOCUMENT_ROOT'] . "/include/ChatGPT/ProductList.php";
     $system2 = $systemMrM . $systemList;
-    $gebruikTools = chatGptToolsActief();
-    $toolChoiceAanraders = $gebruikTools
-      ? [
-        'type' => 'function',
-        'function' => ['name' => 'zoek_productaanraders'],
-      ]
-      : 'auto';
+    $toolChoiceAanraders = [
+      'type' => 'function',
+      'function' => ['name' => 'zoek_productaanraders'],
+    ];
     $assistant = CHATGPT(
       'Welke games raad je me aan om te kopen op basis van de antwoorden die ik heb gegeven? Games die ik leuk vind heb ik al gekocht.',
       $system2,
@@ -338,7 +331,6 @@ Het is nu ' . $dag[$dateN] . ' ' . date("j") . ' ' . $maand[$maandN] . ' ' . dat
       3,
       $conversationHistoryArray,
       1,
-      $gebruikTools,
       $conn,
       $toolChoiceAanraders
     );

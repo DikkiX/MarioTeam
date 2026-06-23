@@ -10,6 +10,7 @@ Dit is de codebase van Mario Team (o.a. de chat op de website + het e-maildashbo
   - UI: [ChatBotMrM.php](ChatBotMrM.php)
   - API: [api/chat/send.php](api/chat/send.php) → [api/chat/status.php](api/chat/status.php)
   - Worker: [api/chat/worker.php](api/chat/worker.php)
+  - Cheat sheet functie-keuze (PDF): [Uitleg chat functie-keuze.pdf](Uitleg%20chat%20functie-keuze.pdf)
 - E-maildashboard: [EmailDashboard.php](EmailDashboard.php)
 
 ## Mappen (kort)

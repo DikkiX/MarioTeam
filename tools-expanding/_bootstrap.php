@@ -96,18 +96,46 @@ function toolsExpandingCatalogus(): array
 {
     return [
         [
-            'titel' => 'CHATGPT + tools (sync)',
-            'beschrijving' => 'Test sync CHATGPT() met database-tools — zelfde keten als ChatGptMrM, zonder worker.',
-            'type' => 'gpt',
-            'url' => 'gpt-sync-tools.php',
-            'functie' => 'CHATGPT() → chat_tools.php',
-        ],
-        [
             'titel' => 'Bestelling opzoeken',
-            'beschrijving' => 'Direct zoek_bestelling via voerChatToolUit() — geen GPT, wel dezelfde tool als de chatbot.',
+            'beschrijving' => 'Direct zoek_bestelling — geen GPT, ruwe tool-output.',
             'type' => 'direct',
             'url' => 'bestelling-zonder-ai.php',
             'functie' => 'voerChatToolUit(zoek_bestelling)',
+        ],
+        [
+            'titel' => 'Bestelling opzoeken',
+            'beschrijving' => 'CHATGPT() + zoek_bestelling — GPT maakt klantantwoord uit tool-data.',
+            'type' => 'gpt',
+            'url' => 'bestelling-met-ai.php',
+            'functie' => 'CHATGPT() → zoek_bestelling',
+        ],
+        [
+            'titel' => 'Productvoorraad opzoeken',
+            'beschrijving' => 'Direct zoek_productvoorraad — één zoekterm, max. 5 producten.',
+            'type' => 'direct',
+            'url' => 'voorraad-zonder-ai.php',
+            'functie' => 'voerChatToolUit(zoek_productvoorraad)',
+        ],
+        [
+            'titel' => 'Productvoorraad opzoeken',
+            'beschrijving' => 'CHATGPT() + zoek_productvoorraad — prijs/voorraad in natuurlijke taal.',
+            'type' => 'gpt',
+            'url' => 'voorraad-met-ai.php',
+            'functie' => 'CHATGPT() → zoek_productvoorraad',
+        ],
+        [
+            'titel' => 'Productaanraders opzoeken',
+            'beschrijving' => 'Direct zoek_productaanraders — meerdere zoektermen, alleen op voorraad.',
+            'type' => 'direct',
+            'url' => 'aanraders-zonder-ai.php',
+            'functie' => 'voerChatToolUit(zoek_productaanraders)',
+        ],
+        [
+            'titel' => 'Productaanraders opzoeken',
+            'beschrijving' => 'CHATGPT() + zoek_productaanraders — suggesties via chat_product_zoek.php.',
+            'type' => 'gpt',
+            'url' => 'aanraders-met-ai.php',
+            'functie' => 'CHATGPT() → zoek_productaanraders',
         ],
     ];
 }

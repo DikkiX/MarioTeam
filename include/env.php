@@ -58,17 +58,3 @@ function getChatModelName(): string
 {
     return getChatModelNameFromMode(getChatModelMode());
 }
-
-/**
- * Zet CHATGPT_GEBRUIK_TOOLS=1 in .env om database-tools in sync CHATGPT()-aanroepen aan te zetten.
- * Chatbot via worker gebruikt tools altijd al (onafhankelijk van deze vlag).
- */
-function chatGptToolsActief(): bool
-{
-    $waarde = getProjectEnvValue('CHATGPT_GEBRUIK_TOOLS');
-    if ($waarde === null || $waarde === '') {
-        return false;
-    }
-
-    return in_array(strtolower(trim((string) $waarde)), ['1', 'true', 'yes', 'ja'], true);
-}

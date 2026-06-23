@@ -1,11 +1,10 @@
 <?php
 //error_reporting(-1); //show errors
-//$sqlalter = 'ALTER TABLE `spel_beoordelingen` ADD `stringAI` TEXT NOT NULL DEFAULT \'\' AFTER `string`, ADD `stringEN` TEXT NOT NULL DEFAULT \'\' AFTER `stringAI`, ADD `stringFR` TEXT NOT NULL DEFAULT \'\' AFTER `stringEN`, ADD `stringDE` TEXT NOT NULL DEFAULT \'\' AFTER `stringFR`;';
+
+// Sync OpenAI-helper: één plek voor CHATGPT()-aanroepen (tekst of met database-tools).
 include_once __DIR__ . '/env.php';
 
-/**
- * Maakt speciale tekens uit GPT-antwoorden leesbaar voordat ze naar de UI of database gaan.
- */
+// Vervangt rare tekens uit GPT-antwoorden (aanhalingstekens, streepjes) door normale tekens.
 function chatGptNormaliseerAntwoordTekst(string $tekst): string
 {
     $search = ['\"', "–", "—", "‘", "’", "“", "”", "…", "’"];
@@ -14,9 +13,7 @@ function chatGptNormaliseerAntwoordTekst(string $tekst): string
     return str_replace($search, $replace, $tekst);
 }
 
-/**
- * Zoekt een PDO-verbinding voor tools: expliciet meegegeven of globale $conn.
- */
+// Geeft een database-verbinding terug: eerst $conn parameter, anders globale $conn.
 function chatGptLosDatabaseConnectieOp($conn = null): ?PDO
 {
     if ($conn instanceof PDO) {
@@ -30,13 +27,7 @@ function chatGptLosDatabaseConnectieOp($conn = null): ?PDO
     return null;
 }
 
-/**
- * Eén OpenAI chat/completions-request; geeft gedecodeerde JSON of null bij fout.
- *
- * @param array<string, mixed> $payload
- *
- * @return array<string, mixed>|null
- */
+// Stuurt één request naar OpenAI chat/completions. Geeft JSON terug of null bij fout.
 function chatGptOpenAiAanroep(string $apiKey, array $payload): ?array
 {
     $ch = curl_init('https://api.openai.com/v1/chat/completions');
@@ -61,13 +52,7 @@ function chatGptOpenAiAanroep(string $apiKey, array $payload): ?array
     return is_array($decoded) ? $decoded : null;
 }
 
-/**
- * Bouwt de messages-array voor OpenAI (system + geschiedenis + nieuw user-bericht).
- *
- * @param array<int, array<string, string>> $userAssistantArray
- *
- * @return array<int, array<string, string>>
- */
+// Zet system prompt + oude berichten + nieuw klantbericht om naar OpenAI messages-formaat.
 function chatGptBouwMessages(string $systemContent, array $userAssistantArray, string $input): array
 {
     $dataUA = [];
@@ -105,12 +90,7 @@ function chatGptBouwMessages(string $systemContent, array $userAssistantArray, s
     );
 }
 
-/**
- * OpenAI-call mét tools: tool-loop zoals in de chat-worker (max. 3 rondes).
- *
- * @param array<int, array<string, mixed>> $messages
- * @param mixed                            $toolChoice 'auto', 'required', of array met vaste functienaam
- */
+// OpenAI met database-tools: GPT mag functies aanroepen, max. 3 rondes (zelfde idee als worker).
 function chatGptMetTools(
     string $apiKey,
     array $messages,
@@ -139,6 +119,7 @@ function chatGptMetTools(
     $aiResponse = chatGptOpenAiAanroep($apiKey, $payload);
 
     while (true) {
+        // Geen geldig antwoord van OpenAI
         if (!is_array($aiResponse) || !isset($aiResponse['choices'][0]['message'])) {
             if ($test == 1) {
                 return 'Fout bij het ophalen van het antwoord.<TEXTAREA>' . print_r($aiResponse, true) . '</TEXTAREA>';
@@ -149,6 +130,7 @@ function chatGptMetTools(
 
         $assistantMessage = $aiResponse['choices'][0]['message'];
 
+        // GPT is klaar: gewoon tekstantwoord teruggeven
         if (empty($assistantMessage['tool_calls'])) {
             $directAntwoord = $assistantMessage['content'] ?? '';
             if (is_string($directAntwoord) && trim($directAntwoord) !== '') {
@@ -162,6 +144,7 @@ function chatGptMetTools(
             return 'Fout bij het ophalen van het antwoord.';
         }
 
+        // Te veel tool-rondes — stoppen
         if ($toolRonde >= $maxToolRondes) {
             if ($test == 1) {
                 return 'Fout bij het ophalen van het antwoord.<TEXTAREA>Te veel tool-rondes.</TEXTAREA>';
@@ -173,6 +156,7 @@ function chatGptMetTools(
         chatToolLog('CHATGPT tool-ronde ' . (string) $toolRonde);
         $messages[] = $assistantMessage;
 
+        // Elke tool die GPT vraagt uitvoeren in de database
         foreach ($assistantMessage['tool_calls'] as $toolCall) {
             $functieNaam = $toolCall['function']['name'] ?? '';
             $arguments = json_decode($toolCall['function']['arguments'] ?? '{}', true);
@@ -190,6 +174,7 @@ function chatGptMetTools(
             ];
         }
 
+        // Nog een OpenAI-call met de tool-resultaten; daarna mag GPT zelf kiezen
         $toolRonde++;
         $huidigeToolChoice = 'auto';
 
@@ -206,20 +191,9 @@ function chatGptMetTools(
     }
 }
 
-/**
- * Centrale OpenAI-helper: tekst-antwoord, optioneel met database-tools (sync).
- *
- * Zonder tools ($gebruikTools = false): één call, alleen tekst — gedrag zoals voorheen.
- * Met tools ($gebruikTools = true): zelfde tool-loop als de chatbot-worker, via chat_tools.php.
- *
- * @param string|int $model               Modelnaam of modus (2/3 via getChatModelNameFromMode)
- * @param array      $UsserAssistantArray Eerdere user/assistant-berichten
- * @param int        $test                1 = uitgebreide fout bij mislukte call
- * @param bool       $gebruikTools        true = live database-tools inschakelen
- * @param PDO|null   $conn                Database (verplicht bij tools; anders globale $conn)
- * @param mixed      $toolChoice          'auto', 'required', of array met vaste functienaam;
- *                                        gebruik bepaalGeforceerdeFunctieKeuze() voor zelfde regels als chat
- */
+// Hoofdfunctie: vraag aan OpenAI stellen en antwoordtekst teruggeven.
+// Met $conn: tools worden meegestuurd — GPT kiest zelf via tool_choice ('auto' tenzij caller anders zegt).
+// Zonder $conn: alleen tekst (system0-label, e-mail, enz.).
 function CHATGPT(
     $input,
     $systemContent,
@@ -227,18 +201,17 @@ function CHATGPT(
     $model = "gpt-5-mini",
     $UsserAssistantArray = [],
     $test = 1,
-    $gebruikTools = false,
     $conn = null,
     $toolChoice = 'auto'
 ) {
     $apiKey = getProjectEnvValue('OPENAI_API_KEY');
-
     if ($apiKey === null || $apiKey === '') {
         return "Fout bij het ophalen van het antwoord.";
     }
 
     $input = addslashes($input);
 
+    // Model 1/2/3 uit .env omzetten naar echte modelnaam
     $mode = null;
     if (is_int($model)) {
         $mode = $model;
@@ -249,20 +222,18 @@ function CHATGPT(
         if ($mode === 2 || $mode === 3) {
             $temperature = 1;
         }
-        $model = function_exists('getChatModelNameFromMode') ? getChatModelNameFromMode($mode) : 'gpt-4.1-mini';
+        $model = getChatModelNameFromMode($mode);
     }
 
     $messages = chatGptBouwMessages($systemContent, $UsserAssistantArray, $input);
 
-    if ($gebruikTools) {
-        $pdo = chatGptLosDatabaseConnectieOp($conn);
-        if (!($pdo instanceof PDO)) {
-            return 'Fout bij het ophalen van het antwoord.';
-        }
-
+    // Database beschikbaar → tools aanbieden; GPT beslist of/welke tool (tool_choice, standaard 'auto')
+    $pdo = chatGptLosDatabaseConnectieOp($conn);
+    if ($pdo instanceof PDO) {
         return chatGptMetTools($apiKey, $messages, (string) $model, (float) $temperature, $pdo, $toolChoice, (int) $test);
     }
 
+    // Geen database → alleen tekst
     $data = [
         'model' => $model,
         'messages' => $messages,
@@ -287,17 +258,15 @@ function CHATGPT(
     return "Fout bij het ophalen van het antwoord.";
 }
 
-/**
- * Bepaalt tool_choice voor sync CHATGPT() — zelfde regels als de chat-worker (zonder gesprek-injectie).
- *
- * @return mixed 'auto', 'required', of array met vaste functienaam
- */
+// Bepaalt welke tool GPT moet/kan gebruiken vóór de CHATGPT()-call (zelfde regels als worker).
+// Geeft 'auto', 'required', of één vaste functienaam terug.
 function chatGptBepaalToolKeuze(string $berichtTekst, string $assistant0 = '')
 {
     include_once __DIR__ . '/chat_functie_keuze.php';
 
     $toolChoice = bepaalGeforceerdeFunctieKeuze($berichtTekst, $assistant0);
 
+    // Bij voorraad/prijs-vragen: GPT moet een tool gebruiken
     if ($toolChoice === 'auto' && preg_match('/\b(op\s+voorraad|voorraad|beschikbaar|in\s+stock|prijs)\b/i', $berichtTekst) === 1) {
         $toolChoice = 'required';
     }
