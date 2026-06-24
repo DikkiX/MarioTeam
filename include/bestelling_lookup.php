@@ -99,9 +99,8 @@ function parseBestellingItemsTekst($itemsTekst)
     return $artikelen;
 }
 
-// Probeert uit een “tracktrace” veld een echte Track&Trace code te halen.
-// In de Bestellingen tabel lijkt dit een '|' gescheiden string te zijn (bijv. "|||9|3SGDWQ838080473").
-// We pakken daarom de laatste “code-achtige” waarde.
+// Probeert uit Bestellingen.tracktrace een track&trace-code te halen.
+// In de DB staat vaak alleen de code (bijv. "NL82629327"), soms pipe-gescheiden (bijv. "|||9|3SGDWQ838080473").
 function haalTrackCodeUitTracktrace($tracktrace)
 {
     $tt = trim((string) $tracktrace);

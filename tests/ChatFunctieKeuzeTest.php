@@ -35,6 +35,28 @@ final class ChatFunctieKeuzeTest extends TestCase
         $this->assertSame('zoek_productvoorraad', $this->functieNaamUitKeuze($keuze));
     }
 
+    public function testPakketVolgenMetBestellingForceertTraceer(): void
+    {
+        $keuze = bepaalGeforceerdeFunctieKeuze(
+            'Waar is mijn pakket? Bestelling 4711, email klant@mail.nl'
+        );
+        $this->assertSame('zoek_traceer', $this->functieNaamUitKeuze($keuze));
+    }
+
+    public function testTraceerNummerForceertTraceer(): void
+    {
+        $keuze = bepaalGeforceerdeFunctieKeuze('Kun je status geven van traceer 3SYZAB123456789?');
+        $this->assertSame('zoek_traceer', $this->functieNaamUitKeuze($keuze));
+    }
+
+    public function testAdresWijzigingForceertAdresTool(): void
+    {
+        $keuze = bepaalGeforceerdeFunctieKeuze(
+            'Ik wil het adres aanpassen voor bestelling 19235'
+        );
+        $this->assertSame('wijzig_bestelling_adres', $this->functieNaamUitKeuze($keuze));
+    }
+
     public function testAlgemeneGroetBlijftAuto(): void
     {
         $this->assertSame('auto', bepaalGeforceerdeFunctieKeuze('Hoi, hoe gaat het?'));

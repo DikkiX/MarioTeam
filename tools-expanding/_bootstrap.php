@@ -137,5 +137,33 @@ function toolsExpandingCatalogus(): array
             'url' => 'aanraders-met-ai.php',
             'functie' => 'CHATGPT() → zoek_productaanraders',
         ],
+        [
+            'titel' => 'Zending / track & trace',
+            'beschrijving' => 'Direct zoek_traceer — PostNL/GLS status, geen traceernummer in output.',
+            'type' => 'direct',
+            'url' => 'traceer-zonder-ai.php',
+            'functie' => 'voerChatToolUit(zoek_traceer)',
+        ],
+        [
+            'titel' => 'Zending / track & trace',
+            'beschrijving' => 'CHATGPT() + zoek_traceer — bezorgstatus in klanttaal, nooit traceernummer.',
+            'type' => 'gpt',
+            'url' => 'traceer-met-ai.php',
+            'functie' => 'CHATGPT() → zoek_traceer',
+        ],
+        [
+            'titel' => 'Besteladres wijzigen',
+            'beschrijving' => 'Direct wijzig_bestelling_adres — huidig adres ophalen en opslaan.',
+            'type' => 'direct',
+            'url' => 'adres-zonder-ai.php',
+            'functie' => 'voerChatToolUit(wijzig_bestelling_adres)',
+        ],
+        [
+            'titel' => 'Besteladres wijzigen',
+            'beschrijving' => 'CHATGPT() + wijzig_bestelling_adres — adreswijziging in klanttaal.',
+            'type' => 'gpt',
+            'url' => 'adres-met-ai.php',
+            'functie' => 'CHATGPT() → wijzig_bestelling_adres',
+        ],
     ];
 }

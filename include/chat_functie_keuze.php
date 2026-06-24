@@ -58,10 +58,40 @@ function bepaalGeforceerdeFunctieKeuze(string $berichtTekst, string $assistant0 
         return 'auto';
     }
 
-    // Bestelling: bestelnummer + e-mail in het bericht → zoek_bestelling.
     $heeftBestelWoord = preg_match('/bestelling|bestelnummer|order|status|inhoud|artikelen|orderregels|wat heb ik besteld|wat zit er/i', $t) === 1;
     $heeftEmail = preg_match('/[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}/i', $t) === 1;
     $heeftBestelnummer = preg_match('/\b\d+\b/', $t) === 1;
+
+    // Track & trace: live bezorgstatus (PostNL/GLS) — niet alleen orderregels.
+    $vraagtOmTraceer = preg_match(
+        '/\b(track|trace|traceer|pakket|bezorg|bezorging|zending|levering|onderweg|waar\s+is)\b/i',
+        $t
+    ) === 1;
+    $noemtTraceerNummer = preg_match('/\b3S[A-Z0-9]{8,}\b/i', $t) === 1
+        || (preg_match('/\b[A-Z0-9]{10,20}\b/i', $t) === 1 && $vraagtOmTraceer);
+
+    if ($vraagtOmTraceer && ($noemtTraceerNummer || ($heeftBestelWoord && $heeftEmail && $heeftBestelnummer))) {
+        return [
+            'type' => 'function',
+            'function' => [
+                'name' => 'zoek_traceer',
+            ],
+        ];
+    }
+
+    $vraagtOmAdresWijziging = preg_match(
+        '/\b(adres|woonplaats|postcode|verzendadres|bezorgadres|afleveradres|straat)\b.*\b(wijzig|verander|aanpassen|corrigeren|wijzigen)|\b(wijzig|verander|aanpassen|corrigeren)\b.*\b(adres|woonplaats|postcode|verzendadres|bezorgadres|afleveradres)\b/i',
+        $t
+    ) === 1;
+
+    if ($vraagtOmAdresWijziging && $heeftBestelnummer) {
+        return [
+            'type' => 'function',
+            'function' => [
+                'name' => 'wijzig_bestelling_adres',
+            ],
+        ];
+    }
 
     if ($heeftBestelWoord && $heeftEmail && $heeftBestelnummer) {
         return [

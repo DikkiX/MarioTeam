@@ -12,14 +12,14 @@ final class ChatToolsTest extends TestCase
     {
         $tools = bouwChatTools();
 
-        $this->assertCount(3, $tools);
+        $this->assertCount(5, $tools);
 
         $namen = array_map(static function (array $tool): string {
             return (string) ($tool['function']['name'] ?? '');
         }, $tools);
 
         $this->assertSame(
-            ['zoek_bestelling', 'zoek_productvoorraad', 'zoek_productaanraders'],
+            ['zoek_bestelling', 'zoek_productvoorraad', 'zoek_productaanraders', 'wijzig_bestelling_adres', 'zoek_traceer'],
             $namen
         );
     }

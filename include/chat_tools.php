@@ -17,7 +17,9 @@
  */
 
 include_once __DIR__ . '/bestelling_lookup.php';
+include_once __DIR__ . '/bestelling_adres.php';
 include_once __DIR__ . '/chat_product_zoek.php';
+include_once __DIR__ . '/tracking_lookup.php';
 
 /**
  * Logt tool-acties naar storage/logs/chat_worker.log als de worker draait.
@@ -103,6 +105,62 @@ function bouwChatTools(): array
                         'max_results' => [
                             'type' => 'integer',
                             'description' => 'Aantal resultaten (1 t/m 10).',
+                        ],
+                    ],
+                    'required' => [],
+                    'additionalProperties' => false,
+                ],
+            ],
+        ],
+        [
+            'type' => 'function',
+            'function' => [
+                'name' => 'wijzig_bestelling_adres',
+                'description' => 'Haal het bezorgadres van een bestelling op of sla het op. Alleen bestelnummer nodig. In de database staat het adres in één veld `adres` (volledige regel, bijv. straat, postcode, plaats, land). Wijzigbare velden: naam, adres, telefoon. Alleen vóór verzending.',
+                'parameters' => [
+                    'type' => 'object',
+                    'properties' => [
+                        'bestelling_id' => [
+                            'type' => 'integer',
+                            'description' => 'Het bestelnummer.',
+                        ],
+                        'naam' => [
+                            'type' => 'string',
+                            'description' => 'Nieuwe naam (optioneel, bij opslaan).',
+                        ],
+                        'adres' => [
+                            'type' => 'string',
+                            'description' => 'Nieuw volledig adres in één regel, zoals in de database (optioneel, bij opslaan).',
+                        ],
+                        'telefoon' => [
+                            'type' => 'string',
+                            'description' => 'Nieuw telefoonnummer (optioneel, bij opslaan).',
+                        ],
+                    ],
+                    'required' => ['bestelling_id'],
+                    'additionalProperties' => false,
+                ],
+            ],
+        ],
+        [
+            'type' => 'function',
+            'function' => [
+                'name' => 'zoek_traceer',
+                'description' => 'Haal actuele bezorgstatus op via PostNL of GLS. Gebruik bij track & trace / waar-is-mijn-pakket. Input: traceernummer óf bestelling_id + email. Geef de klant nooit het traceernummer door — alleen status en bezorginfo.',
+                'parameters' => [
+                    'type' => 'object',
+                    'properties' => [
+                        'traceernummer' => [
+                            'type' => 'string',
+                            'description' => 'Track & trace-code uit de verzendmail (optioneel als bestelling_id + email gegeven zijn).',
+                        ],
+                        'bestelling_id' => [
+                            'type' => 'integer',
+                            'description' => 'Bestelnummer (samen met email) om traceergegevens uit de database op te halen.',
+                        ],
+                        'email' => [
+                            'type' => 'string',
+                            'description' => 'E-mailadres bij de bestelling (verplicht bij bestelling_id).',
                         ],
                     ],
                     'required' => [],
@@ -324,6 +382,16 @@ function voerChatToolUit(PDO $conn, string $functieNaam, array $arguments): arra
             'gebruikte_zoektermen' => $gebruikteZoektermen,
             'resultaat' => $rows,
         ];
+    }
+
+    if ($functieNaam === 'wijzig_bestelling_adres') {
+        chatToolLog('wijzig_bestelling_adres aangeroepen');
+        return bestellingAdresRuw($conn, $arguments);
+    }
+
+    if ($functieNaam === 'zoek_traceer') {
+        chatToolLog('zoek_traceer aangeroepen');
+        return zoekTraceerRuw($conn, $arguments);
     }
 
     if ($functieNaam === 'controleer_voorraad_lijst') {
